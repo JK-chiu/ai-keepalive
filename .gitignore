@@ -1,0 +1,7 @@
+# Runtime logs
+*.log
+
+# Claude session state (machine-specific)
+.claude
+.claude.json
+.cache/
