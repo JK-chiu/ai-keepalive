@@ -162,6 +162,7 @@ fi
 
 # ── 5. Crontab ────────────────────────────────────────────────────────────────
 MARKER="# ai-keepalive"
+CRON_TZ_LINE="CRON_TZ=Asia/Taipei"
 CRON_LINE="0 7,12,17 * * 1-7 ${TRIGGER_HOME}/start.sh >> ${TRIGGER_HOME}/cron.log 2>&1 ${MARKER}"
 
 EXISTING=$(crontab -l 2>/dev/null || true)
@@ -169,11 +170,11 @@ if printf '%s\n' "${EXISTING}" | grep -qF "${MARKER}"; then
   info "crontab entry already exists, skipping"
 else
   if [ -z "${EXISTING}" ]; then
-    printf '%s\n' "${CRON_LINE}" | crontab -
+    printf '%s\n%s\n' "${CRON_TZ_LINE}" "${CRON_LINE}" | crontab -
   else
-    printf '%s\n%s\n' "${EXISTING}" "${CRON_LINE}" | crontab -
+    printf '%s\n%s\n%s\n' "${EXISTING}" "${CRON_TZ_LINE}" "${CRON_LINE}" | crontab -
   fi
-  info "crontab installed: 07:00, 12:00, 17:00 UTC (weekdays)"
+  info "crontab installed: 07:00, 12:00, 17:00 Asia/Taipei (daily)"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
