@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# start.sh — cron wrapper for keepalive.mjs
-# Solves: cron has no NVM in PATH, so node/claude/codex are not found
+# start.sh — cron wrapper for keepalive.sh
+# Solves: cron has no NVM in PATH, so claude/codex are not found
 
 set -euo pipefail
 
@@ -44,7 +44,7 @@ for cmd in node claude codex; do
   fi
 done
 
-_log "launching keepalive (node=$(node --version))"
+_log "launching keepalive"
 
 # exec replaces this shell process so cron tracks the right PID
-exec node "${TRIGGER_HOME}/keepalive.mjs"
+exec bash "${TRIGGER_HOME}/keepalive.sh"

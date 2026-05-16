@@ -145,7 +145,7 @@ info "${INSTALL_DIR}"
 # ─────────────────────────────────────────────────────────────────────────────
 header "[2/5] Copy scripts"
 # ─────────────────────────────────────────────────────────────────────────────
-for f in keepalive.mjs start.sh; do
+for f in keepalive.sh start.sh; do
   [ -f "${SRC}/${f}" ] || abort "Source file not found: ${SRC}/${f}"
 
   # -ef: true when both paths point to the same inode (already in place)
@@ -157,7 +157,7 @@ for f in keepalive.mjs start.sh; do
   fi
 done
 chmod 755 "${INSTALL_DIR}/start.sh"
-chmod 644 "${INSTALL_DIR}/keepalive.mjs"
+chmod 755 "${INSTALL_DIR}/keepalive.sh"
 
 # ─────────────────────────────────────────────────────────────────────────────
 header "[3/5] .claude symlink"
