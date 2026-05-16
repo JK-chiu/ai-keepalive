@@ -104,26 +104,14 @@ codex login status
 
 ### 步驟三：複製腳本
 
-**方法 A：git clone（推薦，若有 remote）**
 ```bash
-git clone <repo-url> ~/.ai-keepalive
+git clone git@github.com:JK-chiu/ai-keepalive.git ~/.ai-keepalive
 ```
 
-**方法 B：從舊機器 scp**
-```bash
-# 在舊機器上執行
-scp ~/.ai-keepalive/{keepalive.mjs,start.sh,install.sh,CLAUDE.md,.gitignore} \
-    USER@新機器IP:~/.ai-keepalive/
-```
-
-**方法 B 替代：手動建立目錄再 scp**
-```bash
-# 在新機器上
-mkdir -p ~/.ai-keepalive
-
-# 在舊機器上
-scp -r ~/.ai-keepalive/{*.mjs,*.sh,*.md,.gitignore} USER@新機器:~/.ai-keepalive/
-```
+> HTTPS 替代（若未設定 SSH key）：
+> ```bash
+> git clone https://github.com/JK-chiu/ai-keepalive.git ~/.ai-keepalive
+> ```
 
 ### 步驟四：執行安裝腳本
 
