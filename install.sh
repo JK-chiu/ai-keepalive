@@ -1,192 +1,224 @@
 #!/usr/bin/env bash
-# install.sh — one-shot Linux installer for ai-keepalive (idempotent)
+# install.sh — one-shot installer for ai-keepalive (idempotent, safe to re-run)
 #
 # Usage:
 #   bash install.sh
 #
-# What it does:
-#   0. Pre-flight: checks NVM, Node.js, Claude Code login, Codex login
-#   1. Creates ~/.ai-keepalive/ directory
-#   2. Copies keepalive.mjs and start.sh
-#   3. Creates ~/.ai-keepalive/.claude symlink (shared OAuth credentials)
-#   4. Creates empty ~/.ai-keepalive/CLAUDE.md (prevents loading user CLAUDE.md)
-#   5. Installs crontab entry: 07:00, 12:00, 17:00 on weekdays (UTC)
+# Steps:
+#   0. Pre-flight: verify NVM, Node.js ≥18, Claude Code login, Codex login
+#   1. Create ~/.ai-keepalive/ directory
+#   2. Copy keepalive.mjs and start.sh into place
+#   3. Create ~/.ai-keepalive/.claude symlink  (shares your OAuth credentials)
+#   4. Create empty ~/.ai-keepalive/CLAUDE.md  (prevents loading your personal config)
+#   5. Install crontab: 07:00 / 12:00 / 17:00 Asia/Taipei, every day
 
 set -euo pipefail
 
-TRIGGER_HOME="${HOME}/.ai-keepalive"
-REAL_CLAUDE="${HOME}/.claude"
-SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ── Paths ─────────────────────────────────────────────────────────────────────
+INSTALL_DIR="${HOME}/.ai-keepalive"         # where everything lives
+CLAUDE_DIR="${HOME}/.claude"                # your real Claude credentials
+KEEPALIVE_CLAUDE_DIR="${INSTALL_DIR}/.claude"  # symlink target inside install dir
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # directory this script lives in
 
-# ── Color helpers ─────────────────────────────────────────────────────────────
-info()    { printf '\033[0;32m[setup]\033[0m  %s\n' "$1"; }
-warn()    { printf '\033[0;33m[setup]\033[0m  WARN: %s\n' "$1"; }
-err()     { printf '\033[0;31m[setup]\033[0m  ERROR: %s\n' "$1" >&2; }
-ok()      { printf '\033[0;32m  ✔\033[0m  %s\n' "$1"; }
-fail()    { printf '\033[0;31m  ✘\033[0m  %s\n' "$1"; }
-pending() { printf '\033[0;33m  ?\033[0m  %s\n' "$1"; }
+# ── Output helpers ────────────────────────────────────────────────────────────
+ok()      { printf '  \033[0;32m✔\033[0m  %s\n'      "$1"; }
+fail()    { printf '  \033[0;31m✘\033[0m  %s\n'      "$1"; }
+skip()    { printf '  \033[0;33m–\033[0m  %s\n'      "$1"; }
+info()    { printf '\033[0;32m[install]\033[0m %s\n'  "$1"; }
+warn()    { printf '\033[0;33m[install]\033[0m WARN: %s\n' "$1"; }
+abort()   { printf '\033[0;31m[install]\033[0m ERROR: %s\n' "$1" >&2; exit 1; }
+header()  { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
-PREFLIGHT_ERRORS=0
+# ── Pre-flight check helper ───────────────────────────────────────────────────
+# Usage: check <pass:true|false> "描述" "失敗時的修正指令"
+ERRORS=0
+check() {
+  local passed="$1" desc="$2" fix="$3"
+  if [ "$passed" = "true" ]; then
+    ok "$desc"
+  else
+    fail "$desc"
+    printf '       \033[2m→ %s\033[0m\n' "$fix"
+    ERRORS=$((ERRORS + 1))
+  fi
+}
 
-# ── 0. Pre-flight checks ──────────────────────────────────────────────────────
-printf '\n\033[1m[Pre-flight checks]\033[0m\n'
+# ── Load NVM once (needed for node/codex path resolution) ────────────────────
+NVM_SH="${HOME}/.nvm/nvm.sh"
+if [ -s "$NVM_SH" ]; then
+  # shellcheck source=/dev/null
+  . "$NVM_SH" --no-use   # --no-use: load functions only, don't switch version yet
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+header "[0/5] Pre-flight checks"
+# ─────────────────────────────────────────────────────────────────────────────
 
 # NVM
-if [ -s "${HOME}/.nvm/nvm.sh" ]; then
-  ok "NVM found at ~/.nvm"
-else
-  fail "NVM not found — install from https://github.com/nvm-sh/nvm"
-  PREFLIGHT_ERRORS=$((PREFLIGHT_ERRORS + 1))
-fi
+check "$([ -s "$NVM_SH" ] && echo true || echo false)" \
+  "NVM found at ~/.nvm" \
+  "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
 
-# Node.js (via NVM)
-if [ -s "${HOME}/.nvm/nvm.sh" ]; then
-  # shellcheck source=/dev/null
-  . "${HOME}/.nvm/nvm.sh" --no-use
-  if NODE_PATH=$(nvm which default 2>/dev/null) && [ -n "$NODE_PATH" ]; then
-    NODE_VERSION=$("$NODE_PATH" --version 2>/dev/null || echo "unknown")
-    ok "Node.js ${NODE_VERSION} ($(dirname "$NODE_PATH"))"
+# Node.js — exists and ≥ 18
+NODE_BIN=""
+NODE_OK=false
+if [ -s "$NVM_SH" ]; then
+  if NODE_BIN=$(nvm which default 2>/dev/null) && [ -n "$NODE_BIN" ]; then
+    NODE_VER=$("$NODE_BIN" -e 'process.stdout.write(String(process.versions.node))' 2>/dev/null || echo "0")
+    NODE_MAJOR=${NODE_VER%%.*}
+    if [ "${NODE_MAJOR:-0}" -ge 18 ] 2>/dev/null; then
+      NODE_OK=true
+      ok "Node.js v${NODE_VER}  (${NODE_BIN})"
+    else
+      fail "Node.js v${NODE_VER} is too old (need ≥ 18)"
+      printf '       \033[2m→ nvm install 20\033[0m\n'
+      ERRORS=$((ERRORS + 1))
+    fi
   else
-    fail "Node.js not found via NVM — run: nvm install 20"
-    PREFLIGHT_ERRORS=$((PREFLIGHT_ERRORS + 1))
+    check "false" "Node.js not found via NVM" "nvm install 20"
   fi
 else
-  pending "Node.js check skipped (NVM not available)"
+  skip "Node.js check skipped (NVM not available)"
 fi
+
+# Resolve NVM bin dir for codex lookup
+NODE_BIN_DIR=""
+[ -n "$NODE_BIN" ] && NODE_BIN_DIR="$(dirname "$NODE_BIN")"
 
 # Claude Code — installed?
-CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
-if [ -z "$CLAUDE_BIN" ]; then
-  # Try common paths
-  for p in "${HOME}/.local/bin/claude" "/usr/local/bin/claude"; do
-    [ -x "$p" ] && CLAUDE_BIN="$p" && break
-  done
-fi
-
-if [ -n "$CLAUDE_BIN" ]; then
-  CLAUDE_VER=$("$CLAUDE_BIN" --version 2>/dev/null | head -1 || echo "unknown")
-  ok "Claude Code installed: ${CLAUDE_VER} (${CLAUDE_BIN})"
-else
-  fail "Claude Code not installed — install from https://claude.ai/code"
-  PREFLIGHT_ERRORS=$((PREFLIGHT_ERRORS + 1))
-fi
+CLAUDE_BIN=""
+for p in "$(command -v claude 2>/dev/null)" \
+         "${HOME}/.local/bin/claude" \
+         "/usr/local/bin/claude"; do
+  [ -x "${p:-}" ] && CLAUDE_BIN="$p" && break
+done
+check "$([ -n "$CLAUDE_BIN" ] && echo true || echo false)" \
+  "Claude Code installed${CLAUDE_BIN:+": $("$CLAUDE_BIN" --version 2>/dev/null | head -1)"}" \
+  "See https://claude.ai/code"
 
 # Claude Code — logged in?
-CLAUDE_CREDS="${REAL_CLAUDE}/.credentials.json"
+CLAUDE_CREDS="${CLAUDE_DIR}/.credentials.json"
+CLAUDE_AUTHED=false
 if [ -f "$CLAUDE_CREDS" ]; then
-  if python3 -c "import json; d=json.load(open('${CLAUDE_CREDS}')); exit(0 if 'claudeAiOauth' in d else 1)" 2>/dev/null; then
-    ok "Claude Code: logged in (OAuth credentials found)"
-  else
-    warn "Claude Code: credentials file exists but may be incomplete — run: claude"
-  fi
-else
-  fail "Claude Code: not logged in — run: claude   (will open browser for login)"
-  PREFLIGHT_ERRORS=$((PREFLIGHT_ERRORS + 1))
+  python3 -c "import json; d=json.load(open('${CLAUDE_CREDS}')); exit(0 if 'claudeAiOauth' in d else 1)" 2>/dev/null \
+    && CLAUDE_AUTHED=true
 fi
+check "$CLAUDE_AUTHED" \
+  "Claude Code: logged in (OAuth token found)" \
+  "claude   # opens browser → log in with your Claude subscription"
 
 # Codex CLI — installed?
-CODEX_BIN=$(command -v codex 2>/dev/null || true)
-if [ -z "$CODEX_BIN" ] && [ -s "${HOME}/.nvm/nvm.sh" ]; then
-  # Try via NVM path
-  if NODE_BIN_DIR=$(dirname "$(nvm which default 2>/dev/null)" 2>/dev/null); then
-    [ -x "${NODE_BIN_DIR}/codex" ] && CODEX_BIN="${NODE_BIN_DIR}/codex"
-  fi
-fi
-
-if [ -n "$CODEX_BIN" ]; then
-  CODEX_VER=$("$CODEX_BIN" --version 2>/dev/null | head -1 || echo "unknown")
-  ok "Codex CLI installed: ${CODEX_VER} (${CODEX_BIN})"
-else
-  fail "Codex CLI not installed — run: npm install -g @openai/codex"
-  PREFLIGHT_ERRORS=$((PREFLIGHT_ERRORS + 1))
-fi
+CODEX_BIN=""
+for p in "$(command -v codex 2>/dev/null)" \
+         "${NODE_BIN_DIR}/codex"; do
+  [ -x "${p:-}" ] && CODEX_BIN="$p" && break
+done
+check "$([ -n "$CODEX_BIN" ] && echo true || echo false)" \
+  "Codex CLI installed${CODEX_BIN:+": $("$CODEX_BIN" --version 2>/dev/null | head -1)"}" \
+  "npm install -g @openai/codex"
 
 # Codex CLI — logged in?
+CODEX_AUTHED=false
 if [ -n "$CODEX_BIN" ]; then
-  CODEX_STATUS=$("$CODEX_BIN" login status 2>&1 || true)
-  if echo "$CODEX_STATUS" | grep -qi "logged in"; then
-    ok "Codex CLI: ${CODEX_STATUS}"
-  else
-    fail "Codex CLI: not logged in — run: codex login   (will open browser for ChatGPT login)"
-    PREFLIGHT_ERRORS=$((PREFLIGHT_ERRORS + 1))
-  fi
+  "$CODEX_BIN" login status 2>&1 | grep -qi "logged in" && CODEX_AUTHED=true
+fi
+if [ -n "$CODEX_BIN" ]; then
+  check "$CODEX_AUTHED" \
+    "Codex CLI: logged in (ChatGPT account)" \
+    "codex login   # opens browser → log in with your ChatGPT subscription"
 else
-  pending "Codex login check skipped (not installed)"
+  skip "Codex login check skipped (not installed)"
 fi
 
-# Abort if critical errors
-if [ "$PREFLIGHT_ERRORS" -gt 0 ]; then
-  printf '\n\033[0;31m[setup] %d pre-flight check(s) failed. Fix the above issues and re-run install.sh.\033[0m\n\n' "$PREFLIGHT_ERRORS"
+# Abort if anything failed
+if [ "$ERRORS" -gt 0 ]; then
+  printf '\n\033[0;31m%d check(s) failed — fix the above and re-run install.sh\033[0m\n\n' "$ERRORS"
   exit 1
 fi
 
-printf '\n\033[1m[Installing]\033[0m\n'
+# ─────────────────────────────────────────────────────────────────────────────
+header "[1/5] Create directory"
+# ─────────────────────────────────────────────────────────────────────────────
+mkdir -p "${INSTALL_DIR}"
+info "${INSTALL_DIR}"
 
-# ── 1. Create directory ───────────────────────────────────────────────────────
-mkdir -p "${TRIGGER_HOME}"
-info "directory: ${TRIGGER_HOME}"
-
-# ── 2. Copy scripts ───────────────────────────────────────────────────────────
-info "Installing scripts from ${SRC}..."
+# ─────────────────────────────────────────────────────────────────────────────
+header "[2/5] Copy scripts"
+# ─────────────────────────────────────────────────────────────────────────────
 for f in keepalive.mjs start.sh; do
-  [ -f "${SRC}/${f}" ] || { err "Source file not found: ${SRC}/${f}"; exit 1; }
-  if [ "${SRC}/${f}" -ef "${TRIGGER_HOME}/${f}" ]; then
+  [ -f "${SRC}/${f}" ] || abort "Source file not found: ${SRC}/${f}"
+
+  # -ef: true when both paths point to the same inode (already in place)
+  if [ "${SRC}/${f}" -ef "${INSTALL_DIR}/${f}" ]; then
     info "  already in place: ${f}"
   else
-    cp -f "${SRC}/${f}" "${TRIGGER_HOME}/${f}"
-    info "  installed: ${f}"
+    cp -f "${SRC}/${f}" "${INSTALL_DIR}/${f}"
+    info "  copied: ${f}"
   fi
 done
-chmod 755 "${TRIGGER_HOME}/start.sh"
-chmod 644 "${TRIGGER_HOME}/keepalive.mjs"
+chmod 755 "${INSTALL_DIR}/start.sh"
+chmod 644 "${INSTALL_DIR}/keepalive.mjs"
 
-# ── 3. .claude symlink (shared OAuth credentials) ─────────────────────────────
-FAKE_CLAUDE="${TRIGGER_HOME}/.claude"
-if [ -L "${FAKE_CLAUDE}" ]; then
-  info ".claude symlink already exists, skipping"
-elif [ -e "${FAKE_CLAUDE}" ]; then
-  warn ".claude exists but is not a symlink — leaving as-is"
+# ─────────────────────────────────────────────────────────────────────────────
+header "[3/5] .claude symlink"
+# ─────────────────────────────────────────────────────────────────────────────
+# keepalive.mjs runs claude with HOME=~/.ai-keepalive so it doesn't pick up
+# your personal CLAUDE.md. The symlink lets claude still find your OAuth token.
+if [ -L "${KEEPALIVE_CLAUDE_DIR}" ]; then
+  info "already exists: ${KEEPALIVE_CLAUDE_DIR} -> $(readlink "${KEEPALIVE_CLAUDE_DIR}")"
+elif [ -e "${KEEPALIVE_CLAUDE_DIR}" ]; then
+  warn "${KEEPALIVE_CLAUDE_DIR} exists but is not a symlink — leaving as-is"
 else
-  ln -s "${REAL_CLAUDE}" "${FAKE_CLAUDE}"
-  info ".claude -> ${REAL_CLAUDE}"
+  ln -s "${CLAUDE_DIR}" "${KEEPALIVE_CLAUDE_DIR}"
+  info "created: ${KEEPALIVE_CLAUDE_DIR} -> ${CLAUDE_DIR}"
 fi
 
-# ── 4. Empty CLAUDE.md ────────────────────────────────────────────────────────
-CLAUDE_MD="${TRIGGER_HOME}/CLAUDE.md"
+# ─────────────────────────────────────────────────────────────────────────────
+header "[4/5] CLAUDE.md"
+# ─────────────────────────────────────────────────────────────────────────────
+# An empty CLAUDE.md here stops claude from searching further up the tree
+# and loading your personal project instructions during a keepalive ping.
+CLAUDE_MD="${INSTALL_DIR}/CLAUDE.md"
 if [ ! -f "${CLAUDE_MD}" ]; then
   touch "${CLAUDE_MD}"
-  info "CLAUDE.md created (empty)"
+  info "created empty CLAUDE.md"
 else
-  info "CLAUDE.md already exists, skipping"
+  info "already exists: CLAUDE.md"
 fi
 
-# ── 5. Crontab ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+header "[5/5] Crontab"
+# ─────────────────────────────────────────────────────────────────────────────
 MARKER="# ai-keepalive"
 CRON_TZ_LINE="CRON_TZ=Asia/Taipei"
-CRON_LINE="0 7,12,17 * * 1-7 ${TRIGGER_HOME}/start.sh >> ${TRIGGER_HOME}/cron.log 2>&1 ${MARKER}"
+CRON_LINE="0 7,12,17 * * 1-7 ${INSTALL_DIR}/start.sh >> ${INSTALL_DIR}/cron.log 2>&1 ${MARKER}"
 
 EXISTING=$(crontab -l 2>/dev/null || true)
 if printf '%s\n' "${EXISTING}" | grep -qF "${MARKER}"; then
-  info "crontab entry already exists, skipping"
+  info "already installed — skipping"
+  crontab -l | grep "${MARKER}"
 else
   if [ -z "${EXISTING}" ]; then
     printf '%s\n%s\n' "${CRON_TZ_LINE}" "${CRON_LINE}" | crontab -
   else
     printf '%s\n%s\n%s\n' "${EXISTING}" "${CRON_TZ_LINE}" "${CRON_LINE}" | crontab -
   fi
-  info "crontab installed: 07:00, 12:00, 17:00 Asia/Taipei (daily)"
+  info "installed: 07:00 / 12:00 / 17:00 Asia/Taipei, every day"
 fi
 
-# ── Summary ───────────────────────────────────────────────────────────────────
-printf '\n\033[1m[Summary]\033[0m\n'
-info "Directory:"
-ls -la "${TRIGGER_HOME}" | grep -v "^total"
+# ─────────────────────────────────────────────────────────────────────────────
+header "Done"
+# ─────────────────────────────────────────────────────────────────────────────
 printf '\n'
-info "Crontab:"
-crontab -l 2>/dev/null | grep "ai-keepalive" || warn "No crontab entry found"
+info "Directory:  ${INSTALL_DIR}"
+info "Main log:   ${INSTALL_DIR}/keepalive.log"
+info "Cron log:   ${INSTALL_DIR}/cron.log"
 printf '\n'
-printf '\033[0;32m[setup] Installation complete!\033[0m\n\n'
-info "Test now:  ${TRIGGER_HOME}/start.sh"
-info "Main log:  ${TRIGGER_HOME}/keepalive.log"
-info "Cron log:  ${TRIGGER_HOME}/cron.log"
-printf '\n'
+
+# Offer to run a test immediately
+printf 'Run a test now? [y/N] '
+read -r answer
+if printf '%s' "$answer" | grep -qi '^y'; then
+  printf '\n'
+  "${INSTALL_DIR}/start.sh"
+fi
