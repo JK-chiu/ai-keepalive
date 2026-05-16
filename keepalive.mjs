@@ -106,16 +106,40 @@ function formatTW(date_or_ms) {
   return `${g("year")}-${g("month")}-${g("day")}T${g("hour")}:${g("minute")}:${g("second")}+08:00`
 }
 
+// Returns "HH:MM:SS" in Taiwan time — used for compact expiry display
+function timeTW(ms) {
+  return formatTW(ms).slice(11, 19)
+}
+
+// Returns "4h 59m", "45m", or "已過期"
+function timeUntil(ms) {
+  const diff = ms - Date.now()
+  if (diff <= 0) return "已過期"
+  const h = Math.floor(diff / 3_600_000)
+  const m = Math.floor((diff % 3_600_000) / 60_000)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
 
+const SEP = "─".repeat(60)
+
 function log(agent_name, status, message = "") {
   const ts = formatTW(new Date())
-  const suffix = message ? ` ${message}` : ""
-  const line = `${ts} [${agent_name}] ${status}${suffix}`
-  console.log(line)
-  appendFile(LOG_FILE, line + "\n").catch(() => {})
+  const col1 = agent_name.padEnd(9)
+  const col2 = status.padEnd(10)
+  const suffix = message ? message : ""
+  const line = `${ts}  ${col1}  ${col2}  ${suffix}`.trimEnd()
+
+  // Separator before each new run makes runs visually distinct in the log
+  const output = (agent_name === "keepalive" && status === "start")
+    ? `${SEP}\n${line}`
+    : line
+
+  console.log(output)
+  appendFile(LOG_FILE, output + "\n").catch(() => {})
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +194,7 @@ function parseClaudeResult(stdout) {
     const items = parseJsonl(stdout)
 
     const event = items.find((e) => e.type === "rate_limit_event")
-    if (!event) return { ok: false, resets_at: null, reply: null }
+    if (!event) return { ok: false, resets_at: null, reply: null, usage: null }
 
     const info = event.rate_limit_info
     const resets_at = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : null
@@ -179,9 +203,17 @@ function parseClaudeResult(stdout) {
     const result_item = items.find((e) => e.type === "result")
     const reply = result_item?.result ?? null
 
-    return { ok, resets_at, reply }
+    // Capture remaining quota if the API returns it
+    const usage = {
+      requests_remaining: info.requestsRemaining ?? null,
+      requests_limit:     info.requestsLimit     ?? null,
+      tokens_remaining:   info.tokensRemaining   ?? null,
+      tokens_limit:       info.tokensLimit       ?? null,
+    }
+
+    return { ok, resets_at, reply, usage }
   } catch {
-    return { ok: false, resets_at: null, reply: null }
+    return { ok: false, resets_at: null, reply: null, usage: null }
   }
 }
 
@@ -221,7 +253,7 @@ async function parseCodexResult(stdout) {
     const events = parseJsonl(stdout)
 
     const started = events.find((e) => e.type === "thread.started")
-    if (!started || !started.thread_id) return { ok: false, resets_at: null, reply: null }
+    if (!started || !started.thread_id) return { ok: false, resets_at: null, reply: null, usage: null }
 
     const thread_id = started.thread_id
 
@@ -237,7 +269,7 @@ async function parseCodexResult(stdout) {
 
     // Read rate limits from session file
     const session_path = await findCodexSessionFile(thread_id)
-    if (!session_path) return { ok: false, resets_at: null, reply }
+    if (!session_path) return { ok: false, resets_at: null, reply, usage: null }
 
     const session_content = await readFile(session_path, "utf-8")
     const session_events = parseJsonl(session_content)
@@ -246,7 +278,7 @@ async function parseCodexResult(stdout) {
       (e) => e.type === "event_msg" && e.payload?.type === "token_count"
     )
 
-    if (token_events.length === 0) return { ok: false, resets_at: null, reply }
+    if (token_events.length === 0) return { ok: false, resets_at: null, reply, usage: null }
 
     const last = token_events[token_events.length - 1]
     const rate_limits = last.payload.rate_limits
@@ -254,39 +286,63 @@ async function parseCodexResult(stdout) {
     const resets_at = typeof resets_at_raw === "number" ? resets_at_raw * 1000 : null
     const ok = resets_at !== null && rate_limits?.rate_limit_reached_type === null
 
-    return { ok, resets_at, reply }
+    // Cumulative token counts (all token_count events in this session)
+    const tc = last.payload.token_count
+    const usage = {
+      input_tokens:  tc?.input_tokens  ?? null,
+      output_tokens: tc?.output_tokens ?? null,
+      total_tokens:  tc?.total_tokens  ?? null,
+    }
+
+    return { ok, resets_at, reply, usage }
   } catch {
-    return { ok: false, resets_at: null, reply: null }
+    return { ok: false, resets_at: null, reply: null, usage: null }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Result formatting
+// ---------------------------------------------------------------------------
+
+// Builds the detail string shown after "ok" or "retry ok"
+function formatResultLine(agent_name, result) {
+  const parts = []
+
+  if (result.resets_at) {
+    parts.push(`視窗到期 ${timeTW(result.resets_at)}  (還剩 ${timeUntil(result.resets_at)})`)
+  }
+
+  if (result.usage) {
+    const u = result.usage
+    if (agent_name === "claude") {
+      if (u.requests_remaining != null && u.requests_limit != null)
+        parts.push(`請求 ${u.requests_remaining}/${u.requests_limit}`)
+      if (u.tokens_remaining != null && u.tokens_limit != null)
+        parts.push(`token ${u.tokens_remaining.toLocaleString()}/${u.tokens_limit.toLocaleString()}`)
+    } else if (agent_name === "codex") {
+      if (u.total_tokens != null)
+        parts.push(`本次 token ${u.total_tokens}`)
+    }
+  }
+
+  return parts.join("  │  ")
 }
 
 // ---------------------------------------------------------------------------
 // Core trigger logic
 // ---------------------------------------------------------------------------
 
-function formatResetsAt(resets_at_ms) {
-  if (!resets_at_ms) return ""
-  return `resetsAt=${formatTW(resets_at_ms)}`
-}
-
-function truncateReply(reply, max_len = 120) {
-  if (!reply) return ""
-  const one_line = reply.replace(/\n/g, " ").trim()
-  if (one_line.length <= max_len) return `reply="${one_line}"`
-  return `reply="${one_line.slice(0, max_len)}…"`
-}
-
 async function triggerAgent(agent) {
   const exists = await commandExists(agent.cmd[0])
   if (!exists) {
-    log(agent.name, "skip:", `${agent.cmd[0]} not found`)
+    log(agent.name, "skip", `${agent.cmd[0]} not found`)
     return
   }
 
   const result = await attemptTrigger(agent)
 
   if (result.ok) {
-    log(agent.name, "ok", [formatResetsAt(result.resets_at), truncateReply(result.reply)].filter(Boolean).join(" "))
+    log(agent.name, "ok", formatResultLine(agent.name, result))
     return
   }
 
@@ -296,23 +352,23 @@ async function triggerAgent(agent) {
     const wait_ms = result.resets_at - now
 
     if (wait_ms <= 0) {
-      log(agent.name, "fail:", `resetsAt already passed, retrying immediately ${truncateReply(result.reply)}`)
+      log(agent.name, "fail", `視窗已過期，立即重試`)
       await retryTrigger(agent)
       return
     }
 
     if (wait_ms <= TOLERANCE_MS) {
-      log(agent.name, "fail:", `resetsAt within tolerance, retrying at ${formatTW(result.resets_at)} ${truncateReply(result.reply)}`)
+      log(agent.name, "fail", `視窗 ${timeTW(result.resets_at)} 即將到期 (還剩 ${timeUntil(result.resets_at)})，等待後重試`)
       await sleep(wait_ms)
       await retryTrigger(agent)
       return
     }
 
-    log(agent.name, "fail:", `resetsAt beyond tolerance (${formatResetsAt(result.resets_at)}), waiting for next tick ${truncateReply(result.reply)}`)
+    log(agent.name, "skip", `視窗到期 ${timeTW(result.resets_at)} (還剩 ${timeUntil(result.resets_at)})，超出容忍範圍，等下次 cron`)
     return
   }
 
-  log(agent.name, "fail:", `no resetsAt, retrying in ${RETRY_DELAY_MS / 1000}s ${truncateReply(result.reply)}`)
+  log(agent.name, "fail", `無法取得視窗到期時間，${RETRY_DELAY_MS / 1000}s 後重試`)
   await sleep(RETRY_DELAY_MS)
   await retryTrigger(agent)
 }
@@ -321,14 +377,14 @@ async function attemptTrigger(agent) {
   const { stdout, stderr, exit_code } = await run(agent.cmd, { cwd: agent.cwd, env: agent.env })
 
   if (exit_code === "TIMEOUT") {
-    log(agent.name, "fail:", "command timed out")
-    return { ok: false, resets_at: null, reply: null }
+    log(agent.name, "fail", "指令逾時 (60s)")
+    return { ok: false, resets_at: null, reply: null, usage: null }
   }
 
   if (exit_code !== 0 && !stdout) {
     const hint = stderr ? stderr.split("\n")[0].slice(0, 200) : ""
-    log(agent.name, "fail:", `exit code ${exit_code}${hint ? " — " + hint : ""}`)
-    return { ok: false, resets_at: null, reply: null }
+    log(agent.name, "fail", `exit ${exit_code}${hint ? "  — " + hint : ""}`)
+    return { ok: false, resets_at: null, reply: null, usage: null }
   }
 
   return await agent.parseResult(stdout)
@@ -336,12 +392,12 @@ async function attemptTrigger(agent) {
 
 async function retryTrigger(agent) {
   const result = await attemptTrigger(agent)
-  const detail = [formatResetsAt(result.resets_at), truncateReply(result.reply)].filter(Boolean).join(" ")
+  const detail = formatResultLine(agent.name, result)
 
   if (result.ok) {
     log(agent.name, "retry ok", detail)
   } else {
-    log(agent.name, "retry fail", detail)
+    log(agent.name, "retry fail", detail || "—")
   }
 }
 
@@ -351,8 +407,11 @@ async function retryTrigger(agent) {
 
 async function main() {
   await mkdir(TRIGGER_HOME, { recursive: true }).catch(() => {})
-  log("keepalive", "start", `pid=${process.pid} node=${process.version}`)
+  const start_ms = Date.now()
+  log("keepalive", "start", `pid=${process.pid}  node=${process.version}`)
   await Promise.all(AGENTS.map((agent) => triggerAgent(agent)))
+  const elapsed = ((Date.now() - start_ms) / 1000).toFixed(1)
+  log("keepalive", "done", `${elapsed}s`)
 }
 
 main().catch((err) => {
