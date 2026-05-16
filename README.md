@@ -135,7 +135,7 @@ bash install.sh
 
 ```bash
 # 手動執行測試
-~/.ai-keepalive/start.sh
+~/.ai-keepalive/keepalive.sh
 
 # 確認 crontab 已安裝
 crontab -l
@@ -159,8 +159,7 @@ tail -f ~/.ai-keepalive/keepalive.log
 
 ```
 ~/.ai-keepalive/
-├── keepalive.sh       # 核心腳本（純 bash + jq）
-├── start.sh           # cron 包裝（解析 NVM PATH，exec keepalive.sh）
+├── keepalive.sh       # 核心腳本（純 bash + jq，含 NVM 初始化）
 ├── install.sh         # 安裝腳本（含 pre-flight 檢查）
 ├── README.md          # 此文件
 ├── CLAUDE.md          # 空白覆蓋（防止載入個人 CLAUDE.md）
@@ -236,7 +235,7 @@ codex login status   # 確認狀態
 
 **cron 模擬環境測試**
 ```bash
-env -i HOME=$HOME PATH=/usr/bin:/bin ~/.ai-keepalive/start.sh
+env -i HOME=$HOME PATH=/usr/bin:/bin ~/.ai-keepalive/keepalive.sh
 ```
 
 **查看記錄**

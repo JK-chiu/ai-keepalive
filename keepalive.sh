@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # keepalive.sh — rolling session-window keepalive for AI coding CLIs
 #
-# Requires: jq, claude (in PATH), codex (in PATH)
-# Called by: start.sh (which resolves NVM/PATH before exec-ing this)
+# Requires: NVM, jq, claude (~/.local/bin or PATH), codex (npm global via NVM)
 
 set -uo pipefail
 
@@ -224,6 +223,26 @@ trigger_agent() {
 }
 
 # ---------------------------------------------------------------------------
+# PATH setup via NVM (needed so codex can be found)
+# ---------------------------------------------------------------------------
+
+setup_path() {
+  local nvm_sh="${HOME}/.nvm/nvm.sh"
+  if [ ! -s "$nvm_sh" ]; then
+    log "keepalive" "fail" "NVM not found at ${nvm_sh}"
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  . "$nvm_sh" --no-use   # load functions only, no version switch
+  local node_bin
+  node_bin=$(nvm which default 2>/dev/null) || {
+    log "keepalive" "fail" "nvm which default failed"
+    exit 1
+  }
+  export PATH="$(dirname "$node_bin"):${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -232,6 +251,8 @@ main() {
   local start_ts
   start_ts=$(now_secs)
   log "keepalive" "start" "pid=$$"
+
+  setup_path
 
   trigger_agent "claude" &
   trigger_agent "codex" &

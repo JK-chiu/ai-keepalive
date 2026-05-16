@@ -5,9 +5,9 @@
 #   bash install.sh
 #
 # Steps:
-#   0. Pre-flight: verify NVM, Node.js ≥18, Claude Code login, Codex login
+#   0. Pre-flight: verify NVM, Node.js ≥18, jq, Claude Code login, Codex login
 #   1. Create ~/.ai-keepalive/ directory
-#   2. Copy keepalive.mjs and start.sh into place
+#   2. Copy keepalive.sh into place
 #   3. Create ~/.ai-keepalive/.claude symlink  (shares your OAuth credentials)
 #   4. Create empty ~/.ai-keepalive/CLAUDE.md  (prevents loading your personal config)
 #   5. Install crontab: 07:00 / 12:00 / 17:00 Asia/Taipei, every day
@@ -59,6 +59,12 @@ check "$([ -s "$NVM_SH" ] && echo true || echo false)" \
   "NVM found at ~/.nvm" \
   "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
 
+# jq — required by keepalive.sh for JSON parsing
+JQ_BIN=$(command -v jq 2>/dev/null || true)
+check "$([ -n "$JQ_BIN" ] && echo true || echo false)" \
+  "jq installed${JQ_BIN:+": $(jq --version 2>/dev/null)"}" \
+  "sudo apt install jq"
+
 # Node.js — exists and ≥ 18
 NODE_BIN=""
 NODE_OK=false
@@ -100,8 +106,7 @@ check "$([ -n "$CLAUDE_BIN" ] && echo true || echo false)" \
 CLAUDE_CREDS="${CLAUDE_DIR}/.credentials.json"
 CLAUDE_AUTHED=false
 if [ -f "$CLAUDE_CREDS" ]; then
-  python3 -c "import json; d=json.load(open('${CLAUDE_CREDS}')); exit(0 if 'claudeAiOauth' in d else 1)" 2>/dev/null \
-    && CLAUDE_AUTHED=true
+  jq -e '.claudeAiOauth' "$CLAUDE_CREDS" >/dev/null 2>&1 && CLAUDE_AUTHED=true
 fi
 check "$CLAUDE_AUTHED" \
   "Claude Code: logged in (OAuth token found)" \
@@ -145,7 +150,7 @@ info "${INSTALL_DIR}"
 # ─────────────────────────────────────────────────────────────────────────────
 header "[2/5] Copy scripts"
 # ─────────────────────────────────────────────────────────────────────────────
-for f in keepalive.sh start.sh; do
+for f in keepalive.sh; do
   [ -f "${SRC}/${f}" ] || abort "Source file not found: ${SRC}/${f}"
 
   # -ef: true when both paths point to the same inode (already in place)
@@ -156,13 +161,12 @@ for f in keepalive.sh start.sh; do
     info "  copied: ${f}"
   fi
 done
-chmod 755 "${INSTALL_DIR}/start.sh"
 chmod 755 "${INSTALL_DIR}/keepalive.sh"
 
 # ─────────────────────────────────────────────────────────────────────────────
 header "[3/5] .claude symlink"
 # ─────────────────────────────────────────────────────────────────────────────
-# keepalive.mjs runs claude with HOME=~/.ai-keepalive so it doesn't pick up
+# keepalive.sh runs claude with HOME=~/.ai-keepalive so it doesn't pick up
 # your personal CLAUDE.md. The symlink lets claude still find your OAuth token.
 if [ -L "${KEEPALIVE_CLAUDE_DIR}" ]; then
   info "already exists: ${KEEPALIVE_CLAUDE_DIR} -> $(readlink "${KEEPALIVE_CLAUDE_DIR}")"
@@ -191,7 +195,7 @@ header "[5/5] Crontab"
 # ─────────────────────────────────────────────────────────────────────────────
 MARKER="# ai-keepalive"
 CRON_TZ_LINE="CRON_TZ=Asia/Taipei"
-CRON_LINE="0 7,12,17 * * 1-7 ${INSTALL_DIR}/start.sh >> ${INSTALL_DIR}/keepalive.log 2>&1 ${MARKER}"
+CRON_LINE="0 7,12,17 * * 1-7 ${INSTALL_DIR}/keepalive.sh >> ${INSTALL_DIR}/keepalive.log 2>&1 ${MARKER}"
 
 EXISTING=$(crontab -l 2>/dev/null || true)
 if printf '%s\n' "${EXISTING}" | grep -qF "${MARKER}"; then
