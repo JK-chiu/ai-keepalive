@@ -191,7 +191,7 @@ header "[5/5] Crontab"
 # ─────────────────────────────────────────────────────────────────────────────
 MARKER="# ai-keepalive"
 CRON_TZ_LINE="CRON_TZ=Asia/Taipei"
-CRON_LINE="0 7,12,17 * * 1-7 ${INSTALL_DIR}/start.sh >> ${INSTALL_DIR}/cron.log 2>&1 ${MARKER}"
+CRON_LINE="0 7,12,17 * * 1-7 ${INSTALL_DIR}/start.sh >> ${INSTALL_DIR}/keepalive.log 2>&1 ${MARKER}"
 
 EXISTING=$(crontab -l 2>/dev/null || true)
 if printf '%s\n' "${EXISTING}" | grep -qF "${MARKER}"; then
@@ -211,8 +211,7 @@ header "Done"
 # ─────────────────────────────────────────────────────────────────────────────
 printf '\n'
 info "Directory:  ${INSTALL_DIR}"
-info "Main log:   ${INSTALL_DIR}/keepalive.log"
-info "Cron log:   ${INSTALL_DIR}/cron.log"
+info "Log:        ${INSTALL_DIR}/keepalive.log"
 printf '\n'
 
 # Offer to run a test immediately
