@@ -1,4 +1,4 @@
-# session-trigger
+# ai-keepalive
 
 Claude Code 與 Codex CLI 的 5 小時速率限制視窗管理腳本（Linux 版）。
 
@@ -52,10 +52,10 @@ codex login
 前提條件都滿足後，執行：
 
 ```bash
-bash setup.sh
+bash install.sh
 ```
 
-`setup.sh` 會先執行 **pre-flight 檢查**，確認以下項目全部通過才繼續安裝：
+`install.sh` 會先執行 **pre-flight 檢查**，確認以下項目全部通過才繼續安裝：
 
 | 檢查項目 | 說明 |
 |----------|------|
@@ -106,30 +106,30 @@ codex login status
 
 **方法 A：git clone（推薦，若有 remote）**
 ```bash
-git clone <repo-url> ~/.session-trigger
+git clone <repo-url> ~/.ai-keepalive
 ```
 
 **方法 B：從舊機器 scp**
 ```bash
 # 在舊機器上執行
-scp ~/.session-trigger/{session-trigger.mjs,run.sh,setup.sh,CLAUDE.md,.gitignore} \
-    USER@新機器IP:~/.session-trigger/
+scp ~/.ai-keepalive/{keepalive.mjs,start.sh,install.sh,CLAUDE.md,.gitignore} \
+    USER@新機器IP:~/.ai-keepalive/
 ```
 
 **方法 B 替代：手動建立目錄再 scp**
 ```bash
 # 在新機器上
-mkdir -p ~/.session-trigger
+mkdir -p ~/.ai-keepalive
 
 # 在舊機器上
-scp -r ~/.session-trigger/{*.mjs,*.sh,*.md,.gitignore} USER@新機器:~/.session-trigger/
+scp -r ~/.ai-keepalive/{*.mjs,*.sh,*.md,.gitignore} USER@新機器:~/.ai-keepalive/
 ```
 
 ### 步驟四：執行安裝腳本
 
 ```bash
-cd ~/.session-trigger
-bash setup.sh
+cd ~/.ai-keepalive
+bash install.sh
 ```
 
 成功輸出範例：
@@ -152,7 +152,7 @@ bash setup.sh
 
 ```bash
 # 手動執行測試
-~/.session-trigger/run.sh
+~/.ai-keepalive/start.sh
 
 # 正常輸出
 # 2026-xx-xxTxx:xx:xx+08:00 [claude] ok resetsAt=...
@@ -167,14 +167,14 @@ crontab -l
 ## 目錄結構
 
 ```
-~/.session-trigger/
-├── session-trigger.mjs      # 核心腳本（Node.js）
-├── run.sh                   # cron 包裝（動態解析 NVM node 路徑）
-├── setup.sh                 # 安裝腳本（含 pre-flight 檢查）
+~/.ai-keepalive/
+├── keepalive.mjs      # 核心腳本（Node.js）
+├── start.sh                   # cron 包裝（動態解析 NVM node 路徑）
+├── install.sh                 # 安裝腳本（含 pre-flight 檢查）
 ├── README.md                # 此文件
 ├── CLAUDE.md                # 空白覆蓋（防止載入個人 CLAUDE.md）
 ├── .gitignore               # 排除 log 與認證快取
-├── session-trigger.log      # 執行記錄（Asia/Taipei 時區）
+├── keepalive.log      # 執行記錄（Asia/Taipei 時區）
 ├── cron.log                 # cron stdout/stderr
 └── .claude → ~/.claude      # symlink（共用 OAuth 認證）
 ```
@@ -210,7 +210,7 @@ UTC+8（台北）對應時間：15:00、20:00、01:00（次日）。
 ### Claude Code
 - **模型**：`haiku`（最便宜）
 - **輸出格式**：`stream-json --verbose`（v2.1.142+ 需此格式才有 `rate_limit_event`）
-- **認證**：`HOME=~/.session-trigger` + `.claude` symlink 共用 OAuth token
+- **認證**：`HOME=~/.ai-keepalive` + `.claude` symlink 共用 OAuth token
 
 ### Codex CLI
 - **模型**：`gpt-5.4-mini`（最便宜，支援 `low` effort）
@@ -221,7 +221,7 @@ UTC+8（台北）對應時間：15:00、20:00、01:00（次日）。
 
 ## 設定參數
 
-`session-trigger.mjs` 頂部常數：
+`keepalive.mjs` 頂部常數：
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
@@ -247,11 +247,11 @@ codex login status   # 確認狀態
 
 **cron 模擬環境測試**
 ```bash
-env -i HOME=$HOME PATH=/usr/bin:/bin ~/.session-trigger/run.sh
+env -i HOME=$HOME PATH=/usr/bin:/bin ~/.ai-keepalive/start.sh
 ```
 
 **查看記錄**
 ```bash
-tail -f ~/.session-trigger/session-trigger.log
-tail -f ~/.session-trigger/cron.log
+tail -f ~/.ai-keepalive/keepalive.log
+tail -f ~/.ai-keepalive/cron.log
 ```

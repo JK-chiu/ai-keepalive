@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 // ==========================================================================
-// session-trigger.mjs — Rolling session window keepalive for AI coding CLIs
+// keepalive.mjs — Rolling session window keepalive for AI coding CLIs
 // ==========================================================================
 //
 // ## Usage
 //
-//   node session-trigger.mjs            # run once (one-shot)
-//   crontab: 0 7,12,17 * * 1-5 ~/.session-trigger/run.sh
+//   node keepalive.mjs            # run once (one-shot)
+//   crontab: 0 7,12,17 * * 1-7 ~/.ai-keepalive/start.sh
 //
 // ## Setup
 //
@@ -56,8 +56,8 @@ const TOLERANCE_MS = 45 * 60 * 1000   // 45 minutes
 const RETRY_DELAY_MS = 30 * 1000      // 30 seconds (fallback when no resetsAt)
 const EXEC_TIMEOUT_MS = 60 * 1000     // 60 seconds
 const TZ = "Asia/Taipei"
-const TRIGGER_HOME = join(homedir(), ".session-trigger")
-const LOG_FILE = join(TRIGGER_HOME, "session-trigger.log")
+const TRIGGER_HOME = join(homedir(), ".ai-keepalive")
+const LOG_FILE = join(TRIGGER_HOME, "keepalive.log")
 
 const AGENTS = [
   {
@@ -351,11 +351,11 @@ async function retryTrigger(agent) {
 
 async function main() {
   await mkdir(TRIGGER_HOME, { recursive: true }).catch(() => {})
-  log("session-trigger", "start", `pid=${process.pid} node=${process.version}`)
+  log("keepalive", "start", `pid=${process.pid} node=${process.version}`)
   await Promise.all(AGENTS.map((agent) => triggerAgent(agent)))
 }
 
 main().catch((err) => {
-  console.error("session-trigger fatal:", err)
+  console.error("keepalive fatal:", err)
   process.exit(1)
 })

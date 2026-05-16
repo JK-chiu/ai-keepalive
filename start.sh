@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# run.sh — cron wrapper for session-trigger.mjs
+# start.sh — cron wrapper for keepalive.mjs
 # Solves: cron has no NVM in PATH, so node/claude/codex are not found
 
 set -euo pipefail
 
-TRIGGER_HOME="${HOME}/.session-trigger"
-LOG_FILE="${TRIGGER_HOME}/session-trigger.log"
+TRIGGER_HOME="${HOME}/.ai-keepalive"
+LOG_FILE="${TRIGGER_HOME}/keepalive.log"
 
 _log() {
-  printf '[%s] [run.sh] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" \
-    >> "$LOG_FILE" 2>/dev/null || logger -t session-trigger "run.sh: $1"
+  printf '[%s] [start.sh] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" \
+    >> "$LOG_FILE" 2>/dev/null || logger -t ai-keepalive "start.sh: $1"
 }
 
 mkdir -p "$TRIGGER_HOME"
@@ -44,7 +44,7 @@ for cmd in node claude codex; do
   fi
 done
 
-_log "launching session-trigger (node=$(node --version))"
+_log "launching keepalive (node=$(node --version))"
 
 # exec replaces this shell process so cron tracks the right PID
-exec node "${TRIGGER_HOME}/session-trigger.mjs"
+exec node "${TRIGGER_HOME}/keepalive.mjs"

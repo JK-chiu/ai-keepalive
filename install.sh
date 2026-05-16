@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# setup.sh — one-shot Linux installer for session-trigger (idempotent)
+# install.sh — one-shot Linux installer for ai-keepalive (idempotent)
 #
 # Usage:
-#   bash setup.sh
+#   bash install.sh
 #
 # What it does:
 #   0. Pre-flight: checks NVM, Node.js, Claude Code login, Codex login
-#   1. Creates ~/.session-trigger/ directory
-#   2. Copies session-trigger.mjs and run.sh
-#   3. Creates ~/.session-trigger/.claude symlink (shared OAuth credentials)
-#   4. Creates empty ~/.session-trigger/CLAUDE.md (prevents loading user CLAUDE.md)
+#   1. Creates ~/.ai-keepalive/ directory
+#   2. Copies keepalive.mjs and start.sh
+#   3. Creates ~/.ai-keepalive/.claude symlink (shared OAuth credentials)
+#   4. Creates empty ~/.ai-keepalive/CLAUDE.md (prevents loading user CLAUDE.md)
 #   5. Installs crontab entry: 07:00, 12:00, 17:00 on weekdays (UTC)
 
 set -euo pipefail
 
-TRIGGER_HOME="${HOME}/.session-trigger"
+TRIGGER_HOME="${HOME}/.ai-keepalive"
 REAL_CLAUDE="${HOME}/.claude"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -116,7 +116,7 @@ fi
 
 # Abort if critical errors
 if [ "$PREFLIGHT_ERRORS" -gt 0 ]; then
-  printf '\n\033[0;31m[setup] %d pre-flight check(s) failed. Fix the above issues and re-run setup.sh.\033[0m\n\n' "$PREFLIGHT_ERRORS"
+  printf '\n\033[0;31m[setup] %d pre-flight check(s) failed. Fix the above issues and re-run install.sh.\033[0m\n\n' "$PREFLIGHT_ERRORS"
   exit 1
 fi
 
@@ -128,7 +128,7 @@ info "directory: ${TRIGGER_HOME}"
 
 # ── 2. Copy scripts ───────────────────────────────────────────────────────────
 info "Installing scripts from ${SRC}..."
-for f in session-trigger.mjs run.sh; do
+for f in keepalive.mjs start.sh; do
   [ -f "${SRC}/${f}" ] || { err "Source file not found: ${SRC}/${f}"; exit 1; }
   if [ "${SRC}/${f}" -ef "${TRIGGER_HOME}/${f}" ]; then
     info "  already in place: ${f}"
@@ -137,8 +137,8 @@ for f in session-trigger.mjs run.sh; do
     info "  installed: ${f}"
   fi
 done
-chmod 755 "${TRIGGER_HOME}/run.sh"
-chmod 644 "${TRIGGER_HOME}/session-trigger.mjs"
+chmod 755 "${TRIGGER_HOME}/start.sh"
+chmod 644 "${TRIGGER_HOME}/keepalive.mjs"
 
 # ── 3. .claude symlink (shared OAuth credentials) ─────────────────────────────
 FAKE_CLAUDE="${TRIGGER_HOME}/.claude"
@@ -161,8 +161,8 @@ else
 fi
 
 # ── 5. Crontab ────────────────────────────────────────────────────────────────
-MARKER="# session-trigger"
-CRON_LINE="0 7,12,17 * * 1-7 ${TRIGGER_HOME}/run.sh >> ${TRIGGER_HOME}/cron.log 2>&1 ${MARKER}"
+MARKER="# ai-keepalive"
+CRON_LINE="0 7,12,17 * * 1-7 ${TRIGGER_HOME}/start.sh >> ${TRIGGER_HOME}/cron.log 2>&1 ${MARKER}"
 
 EXISTING=$(crontab -l 2>/dev/null || true)
 if printf '%s\n' "${EXISTING}" | grep -qF "${MARKER}"; then
@@ -182,10 +182,10 @@ info "Directory:"
 ls -la "${TRIGGER_HOME}" | grep -v "^total"
 printf '\n'
 info "Crontab:"
-crontab -l 2>/dev/null | grep "session-trigger" || warn "No crontab entry found"
+crontab -l 2>/dev/null | grep "ai-keepalive" || warn "No crontab entry found"
 printf '\n'
 printf '\033[0;32m[setup] Installation complete!\033[0m\n\n'
-info "Test now:  ${TRIGGER_HOME}/run.sh"
-info "Main log:  ${TRIGGER_HOME}/session-trigger.log"
+info "Test now:  ${TRIGGER_HOME}/start.sh"
+info "Main log:  ${TRIGGER_HOME}/keepalive.log"
 info "Cron log:  ${TRIGGER_HOME}/cron.log"
 printf '\n'
