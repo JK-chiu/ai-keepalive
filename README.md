@@ -142,9 +142,12 @@ bash install.sh
 # 手動執行測試
 ~/.ai-keepalive/start.sh
 
-# 正常輸出
-# 2026-xx-xxTxx:xx:xx+08:00 [claude] ok resetsAt=...
-# 2026-xx-xxTxx:xx:xx+08:00 [codex]  ok resetsAt=...
+# 正常輸出（keepalive.log）
+# ────────────────────────────────────────────────────────────
+# 2026-xx-xxTxx:xx:xx+08:00  keepalive  start    pid=...
+# 2026-xx-xxTxx:xx:xx+08:00  claude     ok       視窗到期 HH:MM:SS  (還剩 Xh Ym)
+# 2026-xx-xxTxx:xx:xx+08:00  codex      ok       視窗到期 HH:MM:SS  (還剩 Xh Ym)
+# 2026-xx-xxTxx:xx:xx+08:00  keepalive  done     X.Xs
 
 # 確認 crontab 已安裝
 crontab -l
@@ -162,8 +165,7 @@ crontab -l
 ├── README.md                # 此文件
 ├── CLAUDE.md                # 空白覆蓋（防止載入個人 CLAUDE.md）
 ├── .gitignore               # 排除 log 與認證快取
-├── keepalive.log      # 執行記錄（Asia/Taipei 時區）
-├── cron.log                 # cron stdout/stderr
+├── keepalive.log      # 執行記錄（start.sh + keepalive.mjs + cron stdout，全合一）
 └── .claude → ~/.claude      # symlink（共用 OAuth 認證）
 ```
 
@@ -240,5 +242,4 @@ env -i HOME=$HOME PATH=/usr/bin:/bin ~/.ai-keepalive/start.sh
 **查看記錄**
 ```bash
 tail -f ~/.ai-keepalive/keepalive.log
-tail -f ~/.ai-keepalive/cron.log
 ```
