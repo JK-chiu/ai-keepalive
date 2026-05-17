@@ -39,9 +39,9 @@ time_until() {
 # Logging
 # ---------------------------------------------------------------------------
 #
-# Writes to LOG_FILE and /dev/tty (terminal when available).
-# Using /dev/tty instead of stdout lets log() work correctly even when the
-# caller uses $(...) to capture the function's return value.
+# Writes to LOG_FILE always; also prints to stderr when running interactively.
+# stderr output is gated by [ -t 2 ] to avoid duplicate lines when cron
+# redirects stderr to the same log file via 2>&1.
 
 log() {
   local agent="$1" status="$2" message="${3:-}"

@@ -69,6 +69,7 @@ bash install.sh
 |----------|------|
 | NVM | `~/.nvm/nvm.sh` 存在 |
 | Node.js | `nvm which default` 可解析 |
+| jq | `jq` 可執行 |
 | Claude Code 安裝 | `claude` 可執行 |
 | Claude Code 登入 | `~/.claude/.credentials.json` 含有效 OAuth token |
 | Codex CLI 安裝 | `codex` 可執行 |

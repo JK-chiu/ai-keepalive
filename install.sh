@@ -223,5 +223,5 @@ printf 'Run a test now? [y/N] '
 read -r answer
 if printf '%s' "$answer" | grep -qi '^y'; then
   printf '\n'
-  "${INSTALL_DIR}/start.sh"
+  "${INSTALL_DIR}/keepalive.sh"
 fi
