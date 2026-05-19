@@ -161,7 +161,9 @@ attempt_codex() {
     | tail -1)
 
   printf '%s' "$resets_at"
-  [ -n "$resets_at" ] && [ "$resets_at" != "null" ] && [ "$rate_reached" = "null" ]
+  # rate_limits null → Codex API no longer returns window data; command still ran OK
+  [ -z "$resets_at" ] || [ "$resets_at" = "null" ] && return 0
+  [ "$rate_reached" = "null" ]
 }
 
 # ---------------------------------------------------------------------------
