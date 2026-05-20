@@ -166,8 +166,9 @@ attempt_claude() {
 # ---------------------------------------------------------------------------
 # Codex — attempt once
 # ---------------------------------------------------------------------------
-# Outputs: "resets_at|limit_type|status" on stdout
-# Returns: 0=ok (token_count event seen), 1=fail (no session / timeout / exit)
+# Outputs: "resets_at|limit_type|status" on stdout (fields empty when Codex
+#          reports no rate-limit window data)
+# Returns: 0=ok (command ran), 1=fail (timeout / non-zero exit)
 
 attempt_codex() {
   local exit_code=0
@@ -195,7 +196,9 @@ attempt_codex() {
   today=$(date +%Y/%m/%d)
   session_file=$(ls -t "$HOME/.codex/sessions/$today"/rollout-*.jsonl 2>/dev/null | head -1)
 
-  [ -z "$session_file" ] && return 1
+  # Codex exited 0 → ping delivered. A missing session file just means no
+  # window data to report, not a failure.
+  [ -z "$session_file" ] && { printf '||'; return 0; }
 
   local resets_at rate_reached
   resets_at=$(grep '"type":"event_msg"' "$session_file" \

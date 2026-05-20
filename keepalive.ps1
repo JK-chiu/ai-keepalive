@@ -310,7 +310,7 @@ function Invoke-CodexAttempt {
     Select-Object -First 1
 
   if ($null -eq $sessionFile) {
-    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "triggered; Codex did not report window reset time" }
+    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "" }
   }
 
   $resetsAt = $null
@@ -333,7 +333,7 @@ function Invoke-CodexAttempt {
   }
 
   if ($null -eq $resetsAt) {
-    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "triggered; Codex did not report window reset time" }
+    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "" }
   }
 
   # Reaching a token_count event means the ping was delivered, so the keepalive
