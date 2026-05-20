@@ -166,8 +166,8 @@ attempt_claude() {
 # ---------------------------------------------------------------------------
 # Codex — attempt once
 # ---------------------------------------------------------------------------
-# Outputs: "resets_at||" on stdout (limit_type and status left empty)
-# Returns: 0=ok, 1=fail
+# Outputs: "resets_at|limit_type|status" on stdout
+# Returns: 0=ok (token_count event seen), 1=fail (no session / timeout / exit)
 
 attempt_codex() {
   local exit_code=0
@@ -205,10 +205,15 @@ attempt_codex() {
     | jq -r 'select(.payload.type=="token_count") | .payload.rate_limits.rate_limit_reached_type' \
     | tail -1)
 
-  printf '%s||' "$resets_at"
-  # rate_limits null → Codex API no longer returns window data; command still ran OK
-  { [ -z "$resets_at" ] || [ "$resets_at" = "null" ]; } && return 0
-  [ "$rate_reached" = "null" ]
+  # Reaching a token_count event means the ping was delivered → success.
+  # rate_limit_reached_type names a limit only when one is actually hit.
+  local limit_type='' status=''
+  if [ -n "$resets_at" ] && [ "$resets_at" != "null" ]; then
+    limit_type='five_hour'
+  fi
+  [ -n "$rate_reached" ] && [ "$rate_reached" != "null" ] && status="$rate_reached"
+
+  printf '%s|%s|%s' "$resets_at" "$limit_type" "$status"
 }
 
 # ---------------------------------------------------------------------------

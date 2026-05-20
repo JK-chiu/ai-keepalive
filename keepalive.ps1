@@ -336,8 +336,11 @@ function Invoke-CodexAttempt {
     return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "triggered; Codex did not report window reset time" }
   }
 
-  $ok = ($null -eq $rateReached -or [string]$rateReached -eq "null")
-  return [pscustomobject]@{ Ok = $ok; ResetsAt = $resetsAt; Message = "" }
+  # Reaching a token_count event means the ping was delivered, so the keepalive
+  # succeeded. rate_limit_reached_type names a limit only when one is hit.
+  $reached = [string]$rateReached
+  $statusVal = if ([string]::IsNullOrWhiteSpace($reached) -or $reached -eq "null") { "" } else { $reached }
+  return [pscustomobject]@{ Ok = $true; ResetsAt = $resetsAt; Message = ""; LimitType = "five_hour"; Status = $statusVal }
 }
 
 function Invoke-Agent {
