@@ -87,16 +87,15 @@ limit_label() {
 
 is_weekly() { [ "$1" = "seven_day" ] || [ "$1" = "weekly" ]; }
 
-# Split an attempt function's "resets_at|limit_type" stdout into
-# ATTEMPT_RESETS and ATTEMPT_LIMIT.
+# Split an attempt function's "resets_at|limit_type|status" stdout into
+# ATTEMPT_RESETS, ATTEMPT_LIMIT and ATTEMPT_STATUS.
 parse_attempt_output() {
-  local raw="$1"
+  local raw="$1" rest
   ATTEMPT_RESETS="${raw%%|*}"
-  if [ "${raw#*|}" = "$raw" ]; then
-    ATTEMPT_LIMIT=''
-  else
-    ATTEMPT_LIMIT="${raw#*|}"
-  fi
+  rest="${raw#*|}"
+  if [ "$rest" = "$raw" ]; then ATTEMPT_LIMIT=''; ATTEMPT_STATUS=''; return; fi
+  ATTEMPT_LIMIT="${rest%%|*}"
+  if [ "${rest#*|}" = "$rest" ]; then ATTEMPT_STATUS=''; else ATTEMPT_STATUS="${rest#*|}"; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -119,8 +118,8 @@ format_result() {
 # ---------------------------------------------------------------------------
 # Claude — attempt once
 # ---------------------------------------------------------------------------
-# Outputs: "resets_at|limit_type" on stdout
-# Returns: 0=ok, 1=fail
+# Outputs: "resets_at|limit_type|status" on stdout
+# Returns: 0=ok (rate_limit_event seen), 1=fail (no event / timeout / exit)
 
 attempt_claude() {
   local tmpfile exit_code=0
@@ -155,18 +154,19 @@ attempt_claude() {
   [ -z "$rate_line" ] && return 1
 
   local status resets_at limit_type
-  status=$(printf '%s' "$rate_line"     | jq -r '.rate_limit_info.status')
+  status=$(printf '%s' "$rate_line"     | jq -r '.rate_limit_info.status // empty')
   resets_at=$(printf '%s' "$rate_line"  | jq -r '.rate_limit_info.resetsAt // empty')
   limit_type=$(printf '%s' "$rate_line" | jq -r '.rate_limit_info.rateLimitType // empty')
 
-  printf '%s|%s' "$resets_at" "$limit_type"
-  [ "$status" = "allowed" ]
+  # A rate_limit_event means the request was delivered → ping succeeded,
+  # regardless of the quota status field.
+  printf '%s|%s|%s' "$resets_at" "$limit_type" "$status"
 }
 
 # ---------------------------------------------------------------------------
 # Codex — attempt once
 # ---------------------------------------------------------------------------
-# Outputs: "resets_at|" on stdout (limit_type left empty — primary window only)
+# Outputs: "resets_at||" on stdout (limit_type and status left empty)
 # Returns: 0=ok, 1=fail
 
 attempt_codex() {
@@ -205,7 +205,7 @@ attempt_codex() {
     | jq -r 'select(.payload.type=="token_count") | .payload.rate_limits.rate_limit_reached_type' \
     | tail -1)
 
-  printf '%s|' "$resets_at"
+  printf '%s||' "$resets_at"
   # rate_limits null → Codex API no longer returns window data; command still ran OK
   { [ -z "$resets_at" ] || [ "$resets_at" = "null" ]; } && return 0
   [ "$rate_reached" = "null" ]
@@ -227,10 +227,15 @@ trigger_agent() {
   local raw ok=0
   raw=$($fn) || ok=$?
   parse_attempt_output "$raw"
-  local resets_at="$ATTEMPT_RESETS" limit_type="$ATTEMPT_LIMIT"
+  local resets_at="$ATTEMPT_RESETS" limit_type="$ATTEMPT_LIMIT" status="$ATTEMPT_STATUS"
 
   if [ "$ok" -eq 0 ]; then
-    log "$name" "ok" "$(format_result "$resets_at" "$limit_type")"
+    local line
+    line="$(format_result "$resets_at" "$limit_type")"
+    if [ -n "$status" ] && [ "$status" != "allowed" ]; then
+      line="${line:+$line }status=${status}"
+    fi
+    log "$name" "ok" "$line"
     return
   fi
 

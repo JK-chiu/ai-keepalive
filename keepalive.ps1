@@ -265,13 +265,13 @@ function Invoke-ClaudeAttempt {
     }
 
     if ($event.type -eq "rate_limit_event") {
+      # Reaching a rate_limit_event means the keepalive request was delivered,
+      # so the ping succeeded regardless of the quota status field.
       $resetsAt = Convert-ToResetEpoch $event.rate_limit_info.resetsAt
       $limitType = [string]$event.rate_limit_info.rateLimitType
-      if ($event.rate_limit_info.status -eq "allowed") {
-        $msg = if ($null -eq $resetsAt) { "triggered; Claude did not report current session reset time" } else { "" }
-        return [pscustomobject]@{ Ok = $true; ResetsAt = $resetsAt; Message = $msg; LimitType = $limitType }
-      }
-      return [pscustomobject]@{ Ok = $false; ResetsAt = $resetsAt; Message = ""; LimitType = $limitType }
+      $status = [string]$event.rate_limit_info.status
+      $msg = if ($null -eq $resetsAt) { "triggered; Claude did not report current session reset time" } else { "" }
+      return [pscustomobject]@{ Ok = $true; ResetsAt = $resetsAt; Message = $msg; LimitType = $limitType; Status = $status }
     }
   }
 
@@ -353,6 +353,9 @@ function Invoke-Agent {
 
   if ($result.Ok) {
     $message = if ($result.Message) { $result.Message } else { Format-Result $result.ResetsAt $result.LimitType }
+    if ($result.Status -and $result.Status -ne "allowed") {
+      $message = "$message status=$($result.Status)".Trim()
+    }
     Write-KeepaliveLog $Name "ok" $message
     return
   }
