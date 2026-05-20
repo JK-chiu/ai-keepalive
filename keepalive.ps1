@@ -234,9 +234,11 @@ function Invoke-ClaudeAttempt {
     }
 
     if ($event.type -eq "rate_limit_event") {
-      $resetsAt = Convert-ToResetEpoch $event.rate_limit_info.resetsAt
-      $ok = ($event.rate_limit_info.status -eq "allowed" -and $null -ne $resetsAt)
-      return [pscustomobject]@{ Ok = $ok; ResetsAt = $resetsAt; Message = "" }
+      $ok = ($event.rate_limit_info.status -eq "allowed")
+      if ($ok) {
+        return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "triggered; Claude did not report current session reset time" }
+      }
+      return [pscustomobject]@{ Ok = $false; ResetsAt = $null; Message = "" }
     }
   }
 

@@ -110,12 +110,15 @@ attempt_claude() {
 
   [ -z "$rate_line" ] && return 1
 
-  local status resets_at
+  local status
   status=$(printf '%s' "$rate_line"   | jq -r '.rate_limit_info.status')
-  resets_at=$(printf '%s' "$rate_line" | jq -r '.rate_limit_info.resetsAt')
 
-  printf '%s' "$resets_at"
-  [ "$status" = "allowed" ] && [ -n "$resets_at" ] && [ "$resets_at" != "null" ]
+  [ "$status" = "allowed" ] && {
+    printf '%s' "triggered; Claude did not report current session reset time"
+    return 0
+  }
+
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -183,7 +186,11 @@ trigger_agent() {
   resets_at=$($fn) || ok=$?
 
   if [ "$ok" -eq 0 ]; then
-    log "$name" "ok" "$(format_result "$resets_at")"
+    if [ -n "$resets_at" ] && ! [[ "$resets_at" =~ ^[0-9]+$ ]]; then
+      log "$name" "ok" "$resets_at"
+    else
+      log "$name" "ok" "$(format_result "$resets_at")"
+    fi
     return
   fi
 

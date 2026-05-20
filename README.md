@@ -200,6 +200,7 @@ CRON_TZ=Asia/Taipei
 - **模型**：`haiku`（最便宜）
 - **輸出格式**：`stream-json --verbose`（需此格式才有 `rate_limit_event`）
 - **認證**：`HOME=~/.ai-keepalive` + `.claude` symlink 共用 OAuth token
+- **已知限制**：Claude CLI 目前回報的 `rate_limit_event.resetsAt` 對應 Plan usage 的 `All models`，不是 UI 上的 `Current session`。腳本不會用此時間做 retry/skip，避免誤判。
 
 ### Codex CLI
 - **模型**：`gpt-5.4-mini`（最便宜，支援 `low` effort）
