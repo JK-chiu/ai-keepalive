@@ -34,11 +34,13 @@ function Convert-ToResetEpoch {
 }
 
 function Format-TwTime {
-  param([long]$Epoch)
+  param([long]$Epoch, [switch]$WithDate)
 
   $tz = [TimeZoneInfo]::FindSystemTimeZoneById($TimeZoneId)
   $dt = [DateTimeOffset]::FromUnixTimeSeconds($Epoch)
-  return [TimeZoneInfo]::ConvertTime($dt, $tz).ToString("HH:mm:ss")
+  $local = [TimeZoneInfo]::ConvertTime($dt, $tz)
+  $fmt = if ($WithDate) { "MM-dd HH:mm:ss" } else { "HH:mm:ss" }
+  return $local.ToString($fmt)
 }
 
 function Format-TimeUntil {
@@ -47,8 +49,10 @@ function Format-TimeUntil {
   $diff = $Epoch - (Get-NowSecs)
   if ($diff -le 0) { return "expired" }
 
-  $h = [math]::Floor($diff / 3600)
+  $d = [math]::Floor($diff / 86400)
+  $h = [math]::Floor(($diff % 86400) / 3600)
   $m = [math]::Floor(($diff % 3600) / 60)
+  if ($d -gt 0) { return ("{0}d {1}h" -f $d, $h) }
   if ($h -gt 0) { return ("{0}h {1}m" -f $h, $m) }
   return ("{0}m" -f $m)
 }
@@ -135,11 +139,38 @@ function Test-AgentReady {
   return $true
 }
 
+function Format-LimitLabel {
+  param([string]$LimitType)
+
+  switch ($LimitType) {
+    "five_hour" { return "[5h]" }
+    "seven_day" { return "[週]" }
+    "weekly"    { return "[週]" }
+    default {
+      if ([string]::IsNullOrWhiteSpace($LimitType)) { return "" }
+      return "[$LimitType]"
+    }
+  }
+}
+
+function Test-WeeklyLimit {
+  param([string]$LimitType)
+  return ($LimitType -eq "seven_day" -or $LimitType -eq "weekly")
+}
+
 function Format-Result {
-  param([Nullable[long]]$ResetsAt)
+  param(
+    [Nullable[long]]$ResetsAt,
+    [string]$LimitType = $null
+  )
 
   if ($null -eq $ResetsAt) { return "" }
-  return "window resets at $(Format-TwTime $ResetsAt)  (remaining $(Format-TimeUntil $ResetsAt))"
+
+  $label = Format-LimitLabel $LimitType
+  $time = Format-TwTime $ResetsAt -WithDate:(Test-WeeklyLimit $LimitType)
+  $detail = "window resets at $time  (remaining $(Format-TimeUntil $ResetsAt))"
+  if ($label) { return "$label $detail" }
+  return $detail
 }
 
 function Invoke-CommandWithTimeout {
@@ -234,11 +265,13 @@ function Invoke-ClaudeAttempt {
     }
 
     if ($event.type -eq "rate_limit_event") {
-      $ok = ($event.rate_limit_info.status -eq "allowed")
-      if ($ok) {
-        return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "triggered; Claude did not report current session reset time" }
+      $resetsAt = Convert-ToResetEpoch $event.rate_limit_info.resetsAt
+      $limitType = [string]$event.rate_limit_info.rateLimitType
+      if ($event.rate_limit_info.status -eq "allowed") {
+        $msg = if ($null -eq $resetsAt) { "triggered; Claude did not report current session reset time" } else { "" }
+        return [pscustomobject]@{ Ok = $true; ResetsAt = $resetsAt; Message = $msg; LimitType = $limitType }
       }
-      return [pscustomobject]@{ Ok = $false; ResetsAt = $null; Message = "" }
+      return [pscustomobject]@{ Ok = $false; ResetsAt = $resetsAt; Message = ""; LimitType = $limitType }
     }
   }
 
@@ -319,7 +352,7 @@ function Invoke-Agent {
   $result = & $attemptFn
 
   if ($result.Ok) {
-    $message = if ($result.Message) { $result.Message } else { Format-Result $result.ResetsAt }
+    $message = if ($result.Message) { $result.Message } else { Format-Result $result.ResetsAt $result.LimitType }
     Write-KeepaliveLog $Name "ok" $message
     return
   }
@@ -327,16 +360,19 @@ function Invoke-Agent {
   $now = Get-NowSecs
   if ($null -ne $result.ResetsAt) {
     $waitSecs = $result.ResetsAt - $now
+    $label = Format-LimitLabel $result.LimitType
+    $prefix = if ($label) { "$label " } else { "" }
+    $withDate = Test-WeeklyLimit $result.LimitType
 
     if ($waitSecs -le 0) {
-      Write-KeepaliveLog $Name "fail" "window expired; retrying now"
+      Write-KeepaliveLog $Name "fail" "$($prefix)window expired; retrying now"
       $result = & $attemptFn
     } elseif ($waitSecs -le $ToleranceSecs) {
-      Write-KeepaliveLog $Name "fail" "window resets at $(Format-TwTime $result.ResetsAt) soon (remaining $(Format-TimeUntil $result.ResetsAt)); waiting then retrying"
+      Write-KeepaliveLog $Name "fail" "$($prefix)window resets at $(Format-TwTime $result.ResetsAt -WithDate:$withDate) soon (remaining $(Format-TimeUntil $result.ResetsAt)); waiting then retrying"
       Start-Sleep -Seconds $waitSecs
       $result = & $attemptFn
     } else {
-      Write-KeepaliveLog $Name "skip" "window resets at $(Format-TwTime $result.ResetsAt) (remaining $(Format-TimeUntil $result.ResetsAt)); outside tolerance, wait for next schedule"
+      Write-KeepaliveLog $Name "skip" "$($prefix)window resets at $(Format-TwTime $result.ResetsAt -WithDate:$withDate) (remaining $(Format-TimeUntil $result.ResetsAt)); outside tolerance, wait for next schedule"
       return
     }
   } else {
@@ -345,7 +381,7 @@ function Invoke-Agent {
     $result = & $attemptFn
   }
 
-  $detail = Format-Result $result.ResetsAt
+  $detail = Format-Result $result.ResetsAt $result.LimitType
   if ($result.Message) { $detail = $result.Message }
   if ($result.Ok) {
     Write-KeepaliveLog $Name "retry ok" $detail

@@ -23,16 +23,25 @@ SEP="─────────────────────────
 
 now_secs() { date +%s; }
 
-# HH:MM:SS in Taiwan time from unix seconds
-time_tw() { TZ="$TZ_VAL" date -d "@$1" '+%H:%M:%S'; }
+# Taiwan-time clock from unix seconds. Pass "date" as $2 to prefix MM-DD
+# (used for weekly windows, which can be days away).
+time_tw() {
+  local fmt='+%H:%M:%S'
+  [ "${2:-}" = "date" ] && fmt='+%m-%d %H:%M:%S'
+  TZ="$TZ_VAL" date -d "@$1" "$fmt"
+}
 
-# "4h 59m", "45m", or "已過期"
+# "4d 15h", "4h 59m", "45m", or "expired"
 time_until() {
   local diff=$(( $1 - $(now_secs) ))
-  [ "$diff" -le 0 ] && { printf '已過期'; return; }
-  local h=$(( diff / 3600 ))
+  [ "$diff" -le 0 ] && { printf 'expired'; return; }
+  local d=$(( diff / 86400 ))
+  local h=$(( (diff % 86400) / 3600 ))
   local m=$(( (diff % 3600) / 60 ))
-  [ "$h" -gt 0 ] && printf '%dh %dm' "$h" "$m" || printf '%dm' "$m"
+  if [ "$d" -gt 0 ]; then printf '%dd %dh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
+  else printf '%dm' "$m"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -63,19 +72,54 @@ log() {
 }
 
 # ---------------------------------------------------------------------------
+# Rate-limit window labels
+# ---------------------------------------------------------------------------
+
+# Map a rateLimitType string to a short tag.
+limit_label() {
+  case "$1" in
+    five_hour)        printf '[5h]' ;;
+    seven_day|weekly) printf '[週]' ;;
+    "")               ;;
+    *)                printf '[%s]' "$1" ;;
+  esac
+}
+
+is_weekly() { [ "$1" = "seven_day" ] || [ "$1" = "weekly" ]; }
+
+# Split an attempt function's "resets_at|limit_type" stdout into
+# ATTEMPT_RESETS and ATTEMPT_LIMIT.
+parse_attempt_output() {
+  local raw="$1"
+  ATTEMPT_RESETS="${raw%%|*}"
+  if [ "${raw#*|}" = "$raw" ]; then
+    ATTEMPT_LIMIT=''
+  else
+    ATTEMPT_LIMIT="${raw#*|}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Format result line
 # ---------------------------------------------------------------------------
 
 format_result() {
-  local resets_at="$1"
-  [ -z "$resets_at" ] || [ "$resets_at" = "null" ] && return
-  printf '視窗到期 %s  (還剩 %s)' "$(time_tw "$resets_at")" "$(time_until "$resets_at")"
+  local resets_at="$1" limit_type="${2:-}"
+  { [ -z "$resets_at" ] || [ "$resets_at" = "null" ]; } && return
+
+  local label datearg=''
+  label=$(limit_label "$limit_type")
+  is_weekly "$limit_type" && datearg='date'
+
+  local body
+  body="window resets at $(time_tw "$resets_at" "$datearg")  (remaining $(time_until "$resets_at"))"
+  if [ -n "$label" ]; then printf '%s %s' "$label" "$body"; else printf '%s' "$body"; fi
 }
 
 # ---------------------------------------------------------------------------
 # Claude — attempt once
 # ---------------------------------------------------------------------------
-# Outputs: resets_at (unix secs) on stdout
+# Outputs: "resets_at|limit_type" on stdout
 # Returns: 0=ok, 1=fail
 
 attempt_claude() {
@@ -95,7 +139,7 @@ attempt_claude() {
     >"$tmpfile" 2>/dev/null || exit_code=$?
 
   if [ "$exit_code" -eq 124 ]; then
-    log "claude" "fail" "指令逾時 (${EXEC_TIMEOUT_SECS}s)"
+    log "claude" "fail" "command timeout (${EXEC_TIMEOUT_SECS}s)"
     rm -f "$tmpfile"; return 1
   fi
 
@@ -110,21 +154,19 @@ attempt_claude() {
 
   [ -z "$rate_line" ] && return 1
 
-  local status
-  status=$(printf '%s' "$rate_line"   | jq -r '.rate_limit_info.status')
+  local status resets_at limit_type
+  status=$(printf '%s' "$rate_line"     | jq -r '.rate_limit_info.status')
+  resets_at=$(printf '%s' "$rate_line"  | jq -r '.rate_limit_info.resetsAt // empty')
+  limit_type=$(printf '%s' "$rate_line" | jq -r '.rate_limit_info.rateLimitType // empty')
 
-  [ "$status" = "allowed" ] && {
-    printf '%s' "triggered; Claude did not report current session reset time"
-    return 0
-  }
-
-  return 1
+  printf '%s|%s' "$resets_at" "$limit_type"
+  [ "$status" = "allowed" ]
 }
 
 # ---------------------------------------------------------------------------
 # Codex — attempt once
 # ---------------------------------------------------------------------------
-# Outputs: resets_at (unix secs) on stdout
+# Outputs: "resets_at|" on stdout (limit_type left empty — primary window only)
 # Returns: 0=ok, 1=fail
 
 attempt_codex() {
@@ -139,7 +181,7 @@ attempt_codex() {
     >/dev/null 2>/dev/null || exit_code=$?
 
   if [ "$exit_code" -eq 124 ]; then
-    log "codex" "fail" "指令逾時 (${EXEC_TIMEOUT_SECS}s)"
+    log "codex" "fail" "command timeout (${EXEC_TIMEOUT_SECS}s)"
     return 1
   fi
 
@@ -163,9 +205,9 @@ attempt_codex() {
     | jq -r 'select(.payload.type=="token_count") | .payload.rate_limits.rate_limit_reached_type' \
     | tail -1)
 
-  printf '%s' "$resets_at"
+  printf '%s|' "$resets_at"
   # rate_limits null → Codex API no longer returns window data; command still ran OK
-  [ -z "$resets_at" ] || [ "$resets_at" = "null" ] && return 0
+  { [ -z "$resets_at" ] || [ "$resets_at" = "null" ]; } && return 0
   [ "$rate_reached" = "null" ]
 }
 
@@ -182,48 +224,55 @@ trigger_agent() {
     return
   fi
 
-  local resets_at ok=0
-  resets_at=$($fn) || ok=$?
+  local raw ok=0
+  raw=$($fn) || ok=$?
+  parse_attempt_output "$raw"
+  local resets_at="$ATTEMPT_RESETS" limit_type="$ATTEMPT_LIMIT"
 
   if [ "$ok" -eq 0 ]; then
-    if [ -n "$resets_at" ] && ! [[ "$resets_at" =~ ^[0-9]+$ ]]; then
-      log "$name" "ok" "$resets_at"
-    else
-      log "$name" "ok" "$(format_result "$resets_at")"
-    fi
+    log "$name" "ok" "$(format_result "$resets_at" "$limit_type")"
     return
   fi
 
-  local now wait_secs
+  local now wait_secs label prefix='' datearg=''
   now=$(now_secs)
+  label=$(limit_label "$limit_type")
+  [ -n "$label" ] && prefix="${label} "
+  is_weekly "$limit_type" && datearg='date'
 
   if [ -n "$resets_at" ] && [ "$resets_at" != "null" ]; then
     wait_secs=$(( resets_at - now ))
 
     if [ "$wait_secs" -le 0 ]; then
-      log "$name" "fail" "視窗已過期，立即重試"
-      ok=0; resets_at=$($fn) || ok=$?
+      log "$name" "fail" "${prefix}window expired; retrying now"
+      ok=0; raw=$($fn) || ok=$?
+      parse_attempt_output "$raw"
+      resets_at="$ATTEMPT_RESETS"; limit_type="$ATTEMPT_LIMIT"
 
     elif [ "$wait_secs" -le "$TOLERANCE_SECS" ]; then
       log "$name" "fail" \
-        "視窗 $(time_tw "$resets_at") 即將到期 (還剩 $(time_until "$resets_at"))，等待後重試"
+        "${prefix}window resets at $(time_tw "$resets_at" "$datearg") soon (remaining $(time_until "$resets_at")); waiting then retrying"
       sleep "$wait_secs"
-      ok=0; resets_at=$($fn) || ok=$?
+      ok=0; raw=$($fn) || ok=$?
+      parse_attempt_output "$raw"
+      resets_at="$ATTEMPT_RESETS"; limit_type="$ATTEMPT_LIMIT"
 
     else
       log "$name" "skip" \
-        "視窗到期 $(time_tw "$resets_at") (還剩 $(time_until "$resets_at"))，超出容忍範圍，等下次 cron"
+        "${prefix}window resets at $(time_tw "$resets_at" "$datearg") (remaining $(time_until "$resets_at")); outside tolerance, wait for next schedule"
       return
     fi
 
   else
-    log "$name" "fail" "無法取得視窗到期時間，${RETRY_DELAY_SECS}s 後重試"
+    log "$name" "fail" "could not get window reset time; retrying after ${RETRY_DELAY_SECS}s"
     sleep "$RETRY_DELAY_SECS"
-    ok=0; resets_at=$($fn) || ok=$?
+    ok=0; raw=$($fn) || ok=$?
+    parse_attempt_output "$raw"
+    resets_at="$ATTEMPT_RESETS"; limit_type="$ATTEMPT_LIMIT"
   fi
 
   local detail
-  detail=$(format_result "$resets_at")
+  detail=$(format_result "$resets_at" "$limit_type")
   if [ "$ok" -eq 0 ]; then
     log "$name" "retry ok"   "$detail"
   else
