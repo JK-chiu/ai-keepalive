@@ -79,6 +79,19 @@ function Write-KeepaliveLog {
   }
 }
 
+function Format-JobErrorMessage {
+  param(
+    [string]$Agent,
+    [string]$Message
+  )
+
+  if ($Message -match "not recognized|not found|無法辨識") {
+    return [pscustomobject]@{ Status = "skip"; Message = "$Agent not installed" }
+  }
+
+  return [pscustomobject]@{ Status = "fail"; Message = "job error: $Message" }
+}
+
 function Format-Result {
   param([Nullable[long]]$ResetsAt)
 
@@ -100,6 +113,11 @@ function Invoke-CommandWithTimeout {
       [Environment]::SetEnvironmentVariable($key, [string]$Environment[$key], "Process")
     }
 
+    if ($null -eq (Get-Command $Command -ErrorAction SilentlyContinue)) {
+      "__AI_KEEPALIVE_COMMAND_MISSING__"
+      return
+    }
+
     & $Command @Arguments 2>$null
     $LASTEXITCODE
   } -ArgumentList $Command, $Arguments, $Environment
@@ -114,8 +132,14 @@ function Invoke-CommandWithTimeout {
   Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
 
   $exitCode = 0
+  $commandMissing = $false
   if ($output.Count -gt 0) {
     $last = $output[-1]
+    if ([string]$last -eq "__AI_KEEPALIVE_COMMAND_MISSING__") {
+      $commandMissing = $true
+      $exitCode = 127
+      $output = @()
+    } else {
     $parsed = 0
     if ([int]::TryParse([string]$last, [ref]$parsed)) {
       $exitCode = $parsed
@@ -125,9 +149,10 @@ function Invoke-CommandWithTimeout {
         $output = @()
       }
     }
+    }
   }
 
-  return [pscustomobject]@{ TimedOut = $false; ExitCode = $exitCode; Output = $output }
+  return [pscustomobject]@{ TimedOut = $false; ExitCode = $exitCode; Output = $output; CommandMissing = $commandMissing }
 }
 
 function Invoke-ClaudeAttempt {
@@ -145,6 +170,10 @@ function Invoke-ClaudeAttempt {
   )
 
   $result = Invoke-CommandWithTimeout -Command "claude" -Arguments $args -Environment $envMap
+  if ($result.CommandMissing) {
+    Write-KeepaliveLog "claude" "skip" "claude not installed"
+    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "claude not installed" }
+  }
   if ($result.TimedOut) {
     Write-KeepaliveLog "claude" "fail" "command timeout (${ExecTimeoutSecs}s)"
     return [pscustomobject]@{ Ok = $false; ResetsAt = $null; Message = "" }
@@ -183,6 +212,10 @@ function Invoke-CodexAttempt {
   )
 
   $result = Invoke-CommandWithTimeout -Command "codex" -Arguments $args
+  if ($result.CommandMissing) {
+    Write-KeepaliveLog "codex" "skip" "codex not installed"
+    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "codex not installed" }
+  }
   if ($result.TimedOut) {
     Write-KeepaliveLog "codex" "fail" "command timeout (${ExecTimeoutSecs}s)"
     return [pscustomobject]@{ Ok = $false; ResetsAt = $null; Message = "" }
@@ -309,7 +342,8 @@ function Main {
       foreach ($err in $child.Error) {
         $message = $err.Exception.Message
         if (-not [string]::IsNullOrWhiteSpace($message)) {
-          Write-KeepaliveLog $agent "fail" "job error: $message"
+          $formatted = Format-JobErrorMessage -Agent $agent -Message $message
+          Write-KeepaliveLog $agent $formatted.Status $formatted.Message
         }
       }
     }
