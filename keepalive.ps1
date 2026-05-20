@@ -144,8 +144,8 @@ function Format-LimitLabel {
 
   switch ($LimitType) {
     "five_hour" { return "[5h]" }
-    "seven_day" { return "[週]" }
-    "weekly"    { return "[週]" }
+    "seven_day" { return "[7d]" }
+    "weekly"    { return "[7d]" }
     default {
       if ([string]::IsNullOrWhiteSpace($LimitType)) { return "" }
       return "[$LimitType]"

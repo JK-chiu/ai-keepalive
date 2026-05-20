@@ -79,7 +79,7 @@ log() {
 limit_label() {
   case "$1" in
     five_hour)        printf '[5h]' ;;
-    seven_day|weekly) printf '[週]' ;;
+    seven_day|weekly) printf '[7d]' ;;
     "")               ;;
     *)                printf '[%s]' "$1" ;;
   esac
