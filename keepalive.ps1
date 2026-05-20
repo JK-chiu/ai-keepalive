@@ -45,7 +45,7 @@ function Format-TimeUntil {
   param([long]$Epoch)
 
   $diff = $Epoch - (Get-NowSecs)
-  if ($diff -le 0) { return "已過期" }
+  if ($diff -le 0) { return "expired" }
 
   $h = [math]::Floor($diff / 3600)
   $m = [math]::Floor(($diff % 3600) / 60)
@@ -83,7 +83,7 @@ function Format-Result {
   param([Nullable[long]]$ResetsAt)
 
   if ($null -eq $ResetsAt) { return "" }
-  return "視窗到期 $(Format-TwTime $ResetsAt)  (還剩 $(Format-TimeUntil $ResetsAt))"
+  return "window resets at $(Format-TwTime $ResetsAt)  (remaining $(Format-TimeUntil $ResetsAt))"
 }
 
 function Invoke-CommandWithTimeout {
@@ -146,7 +146,7 @@ function Invoke-ClaudeAttempt {
 
   $result = Invoke-CommandWithTimeout -Command "claude" -Arguments $args -Environment $envMap
   if ($result.TimedOut) {
-    Write-KeepaliveLog "claude" "fail" "指令逾時 (${ExecTimeoutSecs}s)"
+    Write-KeepaliveLog "claude" "fail" "command timeout (${ExecTimeoutSecs}s)"
     return [pscustomobject]@{ Ok = $false; ResetsAt = $null; Message = "" }
   }
   if ($result.ExitCode -ne 0 -and $result.Output.Count -eq 0) {
@@ -184,7 +184,7 @@ function Invoke-CodexAttempt {
 
   $result = Invoke-CommandWithTimeout -Command "codex" -Arguments $args
   if ($result.TimedOut) {
-    Write-KeepaliveLog "codex" "fail" "指令逾時 (${ExecTimeoutSecs}s)"
+    Write-KeepaliveLog "codex" "fail" "command timeout (${ExecTimeoutSecs}s)"
     return [pscustomobject]@{ Ok = $false; ResetsAt = $null; Message = "" }
   }
   if ($result.ExitCode -ne 0) {
@@ -199,7 +199,7 @@ function Invoke-CodexAttempt {
     Select-Object -First 1
 
   if ($null -eq $sessionFile) {
-    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "已觸發，Codex 未回報視窗到期時間" }
+    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "triggered; Codex did not report window reset time" }
   }
 
   $resetsAt = $null
@@ -222,7 +222,7 @@ function Invoke-CodexAttempt {
   }
 
   if ($null -eq $resetsAt) {
-    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "已觸發，Codex 未回報視窗到期時間" }
+    return [pscustomobject]@{ Ok = $true; ResetsAt = $null; Message = "triggered; Codex did not report window reset time" }
   }
 
   $ok = ($null -eq $rateReached -or [string]$rateReached -eq "null")
@@ -251,18 +251,18 @@ function Invoke-Agent {
     $waitSecs = $result.ResetsAt - $now
 
     if ($waitSecs -le 0) {
-      Write-KeepaliveLog $Name "fail" "視窗已過期，立即重試"
+      Write-KeepaliveLog $Name "fail" "window expired; retrying now"
       $result = & $attemptFn
     } elseif ($waitSecs -le $ToleranceSecs) {
-      Write-KeepaliveLog $Name "fail" "視窗 $(Format-TwTime $result.ResetsAt) 即將到期 (還剩 $(Format-TimeUntil $result.ResetsAt))，等待後重試"
+      Write-KeepaliveLog $Name "fail" "window resets at $(Format-TwTime $result.ResetsAt) soon (remaining $(Format-TimeUntil $result.ResetsAt)); waiting then retrying"
       Start-Sleep -Seconds $waitSecs
       $result = & $attemptFn
     } else {
-      Write-KeepaliveLog $Name "skip" "視窗到期 $(Format-TwTime $result.ResetsAt) (還剩 $(Format-TimeUntil $result.ResetsAt))，超出容忍範圍，等下次排程"
+      Write-KeepaliveLog $Name "skip" "window resets at $(Format-TwTime $result.ResetsAt) (remaining $(Format-TimeUntil $result.ResetsAt)); outside tolerance, wait for next schedule"
       return
     }
   } else {
-    Write-KeepaliveLog $Name "fail" "無法取得視窗到期時間，${RetryDelaySecs}s 後重試"
+    Write-KeepaliveLog $Name "fail" "could not get window reset time; retrying after ${RetryDelaySecs}s"
     Start-Sleep -Seconds $RetryDelaySecs
     $result = & $attemptFn
   }
