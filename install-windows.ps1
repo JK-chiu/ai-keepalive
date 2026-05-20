@@ -64,7 +64,7 @@ if ($null -ne $codexCmd) {
 if ($null -ne $codexCmd) {
   $codexUsable = $true
   $status = (& codex login status 2>&1 | Out-String)
-  if ($status -match "Logged in") {
+  if ($status -match "(?im)^\s*Logged in\b") {
     Write-Ok "Codex CLI logged in"
   } else {
     Write-Warn "Codex CLI not logged in - Codex keepalive will be skipped"

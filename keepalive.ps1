@@ -85,11 +85,54 @@ function Format-JobErrorMessage {
     [string]$Message
   )
 
-  if ($Message -match "not recognized|not found|無法辨識") {
+  if ($Message -match "not recognized|not found") {
     return [pscustomobject]@{ Status = "skip"; Message = "$Agent not installed" }
   }
 
   return [pscustomobject]@{ Status = "fail"; Message = "job error: $Message" }
+}
+
+function Test-JsonProperty {
+  param([string]$Path, [string]$Property)
+
+  if (-not (Test-Path $Path)) { return $false }
+  try {
+    $json = Get-Content -Path $Path -Raw | ConvertFrom-Json
+    return ($null -ne $json.$Property)
+  } catch {
+    return $false
+  }
+}
+
+function Test-AgentReady {
+  param([string]$Name)
+
+  if ($null -eq (Get-Command $Name -ErrorAction SilentlyContinue)) {
+    Write-KeepaliveLog $Name "skip" "$Name not installed"
+    return $false
+  }
+
+  if ($Name -eq "claude") {
+    $userCreds = Join-Path (Join-Path $env:USERPROFILE ".claude") ".credentials.json"
+    $keepaliveCreds = Join-Path (Join-Path $KeepaliveHome ".claude") ".credentials.json"
+    if ((Test-JsonProperty -Path $userCreds -Property "claudeAiOauth") -or
+        (Test-JsonProperty -Path $keepaliveCreds -Property "claudeAiOauth")) {
+      return $true
+    }
+    Write-KeepaliveLog $Name "skip" "$Name not logged in"
+    return $false
+  }
+
+  if ($Name -eq "codex") {
+    $status = (& codex login status 2>&1 | Out-String)
+    if ($status -match "(?im)^\s*Logged in\b") {
+      return $true
+    }
+    Write-KeepaliveLog $Name "skip" "$Name not logged in"
+    return $false
+  }
+
+  return $true
 }
 
 function Format-Result {
@@ -266,7 +309,7 @@ function Invoke-Agent {
   param([string]$Name)
 
   if ($null -eq (Get-Command $Name -ErrorAction SilentlyContinue)) {
-    Write-KeepaliveLog $Name "skip" "$Name not found"
+    Write-KeepaliveLog $Name "skip" "$Name not installed"
     return
   }
 
@@ -316,8 +359,19 @@ function Main {
 
   $scriptPath = $PSCommandPath
   $jobs = @()
-  $jobs += Start-Job -Name "ai-keepalive-claude" -FilePath $scriptPath -ArgumentList @("__agent", "claude")
-  $jobs += Start-Job -Name "ai-keepalive-codex" -FilePath $scriptPath -ArgumentList @("__agent", "codex")
+  if (Test-AgentReady "claude") {
+    $jobs += Start-Job -Name "ai-keepalive-claude" -FilePath $scriptPath -ArgumentList @("__agent", "claude")
+  }
+  if (Test-AgentReady "codex") {
+    $jobs += Start-Job -Name "ai-keepalive-codex" -FilePath $scriptPath -ArgumentList @("__agent", "codex")
+  }
+
+  if ($jobs.Count -eq 0) {
+    $elapsed = (Get-NowSecs) - $start
+    Write-KeepaliveLog "keepalive" "done" "${elapsed}s"
+    return
+  }
+
   Wait-Job -Job $jobs | Out-Null
 
   foreach ($job in $jobs) {
