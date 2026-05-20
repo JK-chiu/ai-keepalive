@@ -10,6 +10,7 @@ $KeepaliveClaudeDir = Join-Path $InstallDir ".claude"
 $SourceDir = Split-Path -Parent $PSCommandPath
 $TaskName = "ai-keepalive"
 $Errors = 0
+$UsableAgents = @()
 
 function Write-Ok { param([string]$Text) Write-Host "  [ok]   $Text" -ForegroundColor Green }
 function Write-Fail { param([string]$Text, [string]$Fix) Write-Host "  [fail] $Text" -ForegroundColor Red; Write-Host "         -> $Fix" -ForegroundColor DarkGray; $script:Errors++ }
@@ -40,15 +41,16 @@ $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
 if ($null -ne $claudeCmd) {
   $claudeVersion = (& claude --version 2>$null | Select-Object -First 1)
   Write-Ok "Claude Code installed: $claudeVersion ($($claudeCmd.Source))"
-} else {
-  Write-Fail "Claude Code CLI not found" "Install Claude Code CLI, then verify: claude --version"
-}
 
-$claudeCreds = Join-Path $ClaudeDir ".credentials.json"
-if (Test-JsonProperty -Path $claudeCreds -Property "claudeAiOauth") {
-  Write-Ok "Claude Code logged in (OAuth token found)"
+  $claudeCreds = Join-Path $ClaudeDir ".credentials.json"
+  if (Test-JsonProperty -Path $claudeCreds -Property "claudeAiOauth") {
+    Write-Ok "Claude Code logged in (OAuth token found)"
+    $UsableAgents += "claude"
+  } else {
+    Write-Warn "Claude Code not logged in - Claude keepalive will be skipped"
+  }
 } else {
-  Write-Fail "Claude Code not logged in" "Run: claude"
+  Write-Warn "Claude Code CLI not found - Claude keepalive will be skipped"
 }
 
 $codexCmd = Get-Command codex -ErrorAction SilentlyContinue
@@ -56,15 +58,17 @@ if ($null -ne $codexCmd) {
   $codexVersion = (& codex --version 2>$null | Select-Object -First 1)
   Write-Ok "Codex CLI installed: $codexVersion ($($codexCmd.Source))"
 } else {
-  Write-Fail "Codex CLI not found" "Install Codex CLI, then verify: codex --version"
+  Write-Warn "Codex CLI not found - Codex keepalive will be skipped"
 }
 
 if ($null -ne $codexCmd) {
+  $codexUsable = $true
   $status = (& codex login status 2>&1 | Out-String)
   if ($status -match "Logged in") {
     Write-Ok "Codex CLI logged in"
   } else {
-    Write-Fail "Codex CLI not logged in" "Run: codex login"
+    Write-Warn "Codex CLI not logged in - Codex keepalive will be skipped"
+    $codexUsable = $false
   }
 
   $codexSource = [string]$codexCmd.Source
@@ -75,15 +79,25 @@ if ($null -ne $codexCmd) {
     if ($null -ne (Get-Command node -ErrorAction SilentlyContinue)) {
       Write-Ok "Node.js available: $(& node --version 2>$null)"
     } else {
-      Write-Fail "Node.js required for npm-based Codex CLI" "Install Node.js, then verify: node --version"
+      Write-Warn "Node.js missing for npm-based Codex CLI - Codex keepalive will be skipped"
+      $codexUsable = $false
     }
 
     if ($null -ne (Get-Command npm -ErrorAction SilentlyContinue)) {
       Write-Ok "npm available: $(& npm --version 2>$null)"
     } else {
-      Write-Fail "npm required for npm-based Codex CLI" "Install npm, then verify: npm --version"
+      Write-Warn "npm missing for npm-based Codex CLI - Codex keepalive will be skipped"
+      $codexUsable = $false
     }
   }
+
+  if ($codexUsable) {
+    $UsableAgents += "codex"
+  }
+}
+
+if ($UsableAgents.Count -eq 0) {
+  Write-Fail "No usable AI CLI found" "Install and login to Claude Code CLI or Codex CLI"
 }
 
 if ($Errors -gt 0) {
@@ -107,16 +121,20 @@ Copy-Item -Path $sourceKeepalive -Destination $targetKeepalive -Force
 Write-Info "copied: keepalive.ps1"
 
 Write-Header "[3/5] .claude junction"
-if (Test-Path $KeepaliveClaudeDir) {
-  $item = Get-Item $KeepaliveClaudeDir -Force
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-    Write-Info "already exists: $KeepaliveClaudeDir"
+if ($UsableAgents -contains "claude") {
+  if (Test-Path $KeepaliveClaudeDir) {
+    $item = Get-Item $KeepaliveClaudeDir -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+      Write-Info "already exists: $KeepaliveClaudeDir"
+    } else {
+      Write-Warn "$KeepaliveClaudeDir exists but is not a junction/symlink - leaving as-is"
+    }
   } else {
-    Write-Warn "$KeepaliveClaudeDir exists but is not a junction/symlink - leaving as-is"
+    New-Item -ItemType Junction -Path $KeepaliveClaudeDir -Target $ClaudeDir | Out-Null
+    Write-Info "created: $KeepaliveClaudeDir -> $ClaudeDir"
   }
 } else {
-  New-Item -ItemType Junction -Path $KeepaliveClaudeDir -Target $ClaudeDir | Out-Null
-  Write-Info "created: $KeepaliveClaudeDir -> $ClaudeDir"
+  Write-Warn "Claude not configured - skipping .claude junction"
 }
 
 Write-Header "[4/5] CLAUDE.md"
@@ -140,8 +158,13 @@ $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interact
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 $task = New-ScheduledTask -Action $action -Trigger $triggers -Principal $principal -Settings $settings
 
-Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
-Write-Info "installed/updated task: $TaskName (07:00 / 12:00 / 17:00, current user)"
+$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($null -ne $existingTask) {
+  Write-Warn "task already exists: $TaskName - leaving existing triggers unchanged"
+} else {
+  Register-ScheduledTask -TaskName $TaskName -InputObject $task | Out-Null
+  Write-Info "installed task: $TaskName (07:00 / 12:00 / 17:00, current user)"
+}
 
 Write-Header "Done"
 Write-Info "Directory: $InstallDir"

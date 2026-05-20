@@ -251,7 +251,7 @@ tail -f ~/.ai-keepalive/keepalive.log
 
 Windows 版使用原生 PowerShell + Task Scheduler，不需要 WSL、Git Bash、NVM 或 jq。
 
-> **重要**：只安裝 Claude Desktop / Codex App 不夠。Windows 版必須能在命令列執行 `claude` 與 `codex`，因為 Task Scheduler 需要非互動 CLI。
+> **重要**：只安裝 Claude Desktop / Codex App 不夠。Windows 版至少需要一個可在命令列執行且已登入的 CLI：`claude` 或 `codex`。缺少另一個 CLI 時，執行時會記錄 `skip`，不會讓整體失敗。
 
 ### 1. PowerShell
 
@@ -297,16 +297,16 @@ cd "$env:USERPROFILE\.ai-keepalive-src"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-`install-windows.ps1` 會先執行 pre-flight 檢查：
+`install-windows.ps1` 會先執行 pre-flight 檢查。Claude / Codex 任一可用即可安裝；若兩者都不可用才會中止。
 
 | 檢查項目 | 說明 |
 |----------|------|
 | PowerShell | 版本 5+ |
-| Claude Code 安裝 | `claude` 可執行 |
-| Claude Code 登入 | `%USERPROFILE%\.claude\.credentials.json` 含 OAuth token |
-| Codex CLI 安裝 | `codex` 可執行 |
-| Codex CLI 登入 | `codex login status` 回傳 "Logged in" |
-| Node.js / npm | 只在 Codex CLI 是 npm shim 時要求 |
+| Claude Code 安裝 | 若要啟用 Claude keepalive，需 `claude` 可執行 |
+| Claude Code 登入 | 若要啟用 Claude keepalive，需 `%USERPROFILE%\.claude\.credentials.json` 含 OAuth token |
+| Codex CLI 安裝 | 若要啟用 Codex keepalive，需 `codex` 可執行 |
+| Codex CLI 登入 | 若要啟用 Codex keepalive，需 `codex login status` 回傳 "Logged in" |
+| Node.js / npm | 只在 Codex CLI 是 npm shim 且要啟用 Codex 時要求 |
 
 安裝內容：
 
@@ -320,7 +320,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-windows.ps1
 
 ## Windows Task Scheduler
 
-安裝器會建立或更新 task：
+安裝器會建立 task：
 
 ```powershell
 Get-ScheduledTask -TaskName ai-keepalive
@@ -332,6 +332,8 @@ Get-ScheduledTask -TaskName ai-keepalive
 每天 07:00、12:00、17:00
 僅目前使用者登入時執行
 ```
+
+若已存在同名 task `ai-keepalive`，安裝器只提醒並保留既有 task，不覆蓋觸發時間。
 
 手動觸發：
 
@@ -353,7 +355,7 @@ Get-Content "$env:USERPROFILE\.ai-keepalive\keepalive.log" -Tail 50
 
 ## Windows 故障排除
 
-**pre-flight 失敗：Claude Code CLI not found**
+**Claude Code CLI not found**
 
 ```powershell
 claude --version
@@ -361,13 +363,17 @@ claude --version
 
 Desktop App 不能取代 CLI；必須有 `claude` 指令。
 
-**pre-flight 失敗：Codex CLI not found**
+若只使用 Codex，缺 Claude 會被記錄為 warning，不會中止安裝。
+
+**Codex CLI not found**
 
 ```powershell
 codex --version
 ```
 
 Codex App 不能取代 CLI；必須有 `codex exec`。
+
+若只使用 Claude，缺 Codex 會被記錄為 warning，不會中止安裝。
 
 **pre-flight 失敗：Node.js required for npm-based Codex CLI**
 

@@ -283,9 +283,38 @@ function Main {
 
   $scriptPath = $PSCommandPath
   $jobs = @()
-  $jobs += Start-Job -FilePath $scriptPath -ArgumentList @("__agent", "claude")
-  $jobs += Start-Job -FilePath $scriptPath -ArgumentList @("__agent", "codex")
+  $jobs += Start-Job -Name "ai-keepalive-claude" -FilePath $scriptPath -ArgumentList @("__agent", "claude")
+  $jobs += Start-Job -Name "ai-keepalive-codex" -FilePath $scriptPath -ArgumentList @("__agent", "codex")
   Wait-Job -Job $jobs | Out-Null
+
+  foreach ($job in $jobs) {
+    $agent = if ($job.Name -match 'claude') {
+      "claude"
+    } elseif ($job.Name -match 'codex') {
+      "codex"
+    } else {
+      "job"
+    }
+
+    if ($job.State -eq "Failed") {
+      $reason = $job.ChildJobs[0].JobStateInfo.Reason
+      if ($reason) {
+        Write-KeepaliveLog $agent "fail" "job failed: $($reason.Message)"
+      } else {
+        Write-KeepaliveLog $agent "fail" "job failed"
+      }
+    }
+
+    foreach ($child in $job.ChildJobs) {
+      foreach ($err in $child.Error) {
+        $message = $err.Exception.Message
+        if (-not [string]::IsNullOrWhiteSpace($message)) {
+          Write-KeepaliveLog $agent "fail" "job error: $message"
+        }
+      }
+    }
+  }
+
   Remove-Job -Job $jobs -Force -ErrorAction SilentlyContinue
 
   $elapsed = (Get-NowSecs) - $start
