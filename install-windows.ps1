@@ -160,10 +160,12 @@ $task = New-ScheduledTask -Action $action -Trigger $triggers -Principal $princip
 
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -ne $existingTask) {
-  Write-Warn "task already exists: $TaskName - leaving existing triggers unchanged"
+  # Update action and settings only — triggers belong to the user, never touch them
+  Set-ScheduledTask -TaskName $TaskName -Action $action -Settings $settings | Out-Null
+  Write-Info "updated: $TaskName (action refreshed, existing triggers preserved)"
 } else {
   Register-ScheduledTask -TaskName $TaskName -InputObject $task | Out-Null
-  Write-Info "installed task: $TaskName (07:00 / 12:00 / 17:00, current user)"
+  Write-Info "installed: $TaskName (07:00 / 12:00 / 17:00, current user)"
 }
 
 Write-Header "Done"
