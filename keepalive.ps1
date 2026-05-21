@@ -173,6 +173,71 @@ function Format-Result {
   return $detail
 }
 
+function Get-ClaudeUsage {
+  $credsFile = Join-Path (Join-Path $env:USERPROFILE ".claude") ".credentials.json"
+  if (-not (Test-Path $credsFile)) {
+    Write-KeepaliveLog "claude" "usage" "credentials not found"
+    return
+  }
+
+  $nodeScript = @'
+const fs = require("fs");
+let token;
+try {
+  const c = JSON.parse(fs.readFileSync(process.env.CREDS_FILE, "utf8"));
+  token = c?.claudeAiOauth?.accessToken;
+} catch (e) { process.stdout.write("error:cannot read credentials"); process.exit(0); }
+if (!token) { process.stdout.write("error:no access token"); process.exit(0); }
+
+const now = Date.now() / 1000;
+function until(ts) {
+  const diff = new Date(ts).getTime() / 1000 - now;
+  if (diff <= 0) return "expired";
+  const d = Math.floor(diff / 86400), h = Math.floor((diff % 86400) / 3600), m = Math.floor((diff % 3600) / 60);
+  if (d > 0) return d + "d " + h + "h";
+  if (h > 0) return h + "h " + m + "m";
+  return m + "m";
+}
+function fmt(obj, label) {
+  if (!obj || obj.utilization == null) return null;
+  return label + "=" + obj.utilization + "%  (resets in " + until(obj.resets_at) + ")";
+}
+
+fetch("https://claude.ai/api/oauth/usage", {
+  headers: {
+    "Authorization": "Bearer " + token,
+    "anthropic-client-platform": "claude_code_cli",
+    "User-Agent": "claude-code/2.1.146",
+    "Accept": "application/json",
+  }
+}).then(r => {
+  if (!r.ok) { process.stdout.write("error:HTTP " + r.status); return null; }
+  return r.json();
+}).then(d => {
+  if (!d) return;
+  const parts = [
+    fmt(d.five_hour,  "5h"),
+    fmt(d.seven_day,  "7d"),
+  ].filter(Boolean);
+  process.stdout.write(parts.length ? parts.join("  ·  ") : "no data");
+}).catch(e => { process.stdout.write("error:" + e.message); });
+'@
+
+  $env:CREDS_FILE = $credsFile
+  try {
+    $output = node -e $nodeScript 2>$null
+  } catch {
+    $output = ""
+  }
+  $env:CREDS_FILE = $null
+
+  if ($output -and $output -match "^error:") {
+    Write-KeepaliveLog "claude" "usage" ($output -replace "^error:", "")
+  } else {
+    Write-KeepaliveLog "claude" "usage" $(if ($output) { $output } else { "no response" })
+  }
+}
+
 function Invoke-CommandWithTimeout {
   param(
     [string]$Command,
@@ -403,17 +468,12 @@ function Main {
 
   $scriptPath = $PSCommandPath
   $jobs = @()
+  $jobs += Start-Job -Name "ai-keepalive-usage" -FilePath $scriptPath -ArgumentList @("__usage")
   if (Test-AgentReady "claude") {
     $jobs += Start-Job -Name "ai-keepalive-claude" -FilePath $scriptPath -ArgumentList @("__agent", "claude")
   }
   if (Test-AgentReady "codex") {
     $jobs += Start-Job -Name "ai-keepalive-codex" -FilePath $scriptPath -ArgumentList @("__agent", "codex")
-  }
-
-  if ($jobs.Count -eq 0) {
-    $elapsed = (Get-NowSecs) - $start
-    Write-KeepaliveLog "keepalive" "done" "${elapsed}s"
-    return
   }
 
   Wait-Job -Job $jobs | Out-Null
@@ -423,6 +483,8 @@ function Main {
       "claude"
     } elseif ($job.Name -match 'codex') {
       "codex"
+    } elseif ($job.Name -match 'usage') {
+      "claude"
     } else {
       "job"
     }
@@ -453,7 +515,9 @@ function Main {
   Write-KeepaliveLog "keepalive" "done" "${elapsed}s"
 }
 
-if ($args.Count -ge 2 -and $args[0] -eq "__agent") {
+if ($args.Count -ge 1 -and $args[0] -eq "__usage") {
+  Get-ClaudeUsage
+} elseif ($args.Count -ge 2 -and $args[0] -eq "__agent") {
   Invoke-Agent $args[1]
 } else {
   Main
