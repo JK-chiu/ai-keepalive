@@ -203,12 +203,11 @@ function fmt(obj, label) {
   return label + "=" + obj.utilization + "%  (resets in " + until(obj.resets_at) + ")";
 }
 
-fetch("https://claude.ai/api/oauth/usage", {
+fetch("https://api.anthropic.com/api/oauth/usage", {
   headers: {
     "Authorization": "Bearer " + token,
-    "anthropic-client-platform": "claude_code_cli",
-    "User-Agent": "claude-code/2.1.146",
-    "Accept": "application/json",
+    "anthropic-beta": "oauth-2025-04-20",
+    "User-Agent": "claude-code/2.1",
   }
 }).then(r => {
   if (!r.ok) { process.stdout.write("error:HTTP " + r.status); return null; }
