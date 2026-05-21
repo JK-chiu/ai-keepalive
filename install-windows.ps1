@@ -117,8 +117,12 @@ if (-not (Test-Path $sourceKeepalive)) {
   Write-Host "[install] ERROR: Source file not found: $sourceKeepalive" -ForegroundColor Red
   exit 1
 }
-Copy-Item -Path $sourceKeepalive -Destination $targetKeepalive -Force
-Write-Info "copied: keepalive.ps1"
+if ((Resolve-Path $sourceKeepalive).Path -eq (Resolve-Path $targetKeepalive -ErrorAction SilentlyContinue)?.Path) {
+  Write-Info "already in place: keepalive.ps1"
+} else {
+  Copy-Item -Path $sourceKeepalive -Destination $targetKeepalive -Force
+  Write-Info "copied: keepalive.ps1"
+}
 
 Write-Header "[3/5] .claude junction"
 if ($UsableAgents -contains "claude") {
