@@ -294,6 +294,71 @@ trigger_agent() {
 }
 
 # ---------------------------------------------------------------------------
+# Claude subscription usage  (five-hour & weekly utilization %)
+# ---------------------------------------------------------------------------
+# Calls claude.ai/api/oauth/usage via Node.js (curl is blocked by Cloudflare).
+# Reads ~/.claude/.credentials.json from the real HOME, not KEEPALIVE_HOME.
+
+fetch_claude_usage() {
+  local creds_file="${HOME}/.claude/.credentials.json"
+  if [ ! -f "$creds_file" ]; then
+    log "claude" "usage" "credentials not found"
+    return
+  fi
+
+  local output
+  output=$(CREDS_FILE="$creds_file" node -e '
+    const fs = require("fs");
+    let token;
+    try {
+      const c = JSON.parse(fs.readFileSync(process.env.CREDS_FILE, "utf8"));
+      token = c?.claudeAiOauth?.accessToken;
+    } catch (e) { process.stdout.write("error:cannot read credentials"); process.exit(0); }
+    if (!token) { process.stdout.write("error:no access token"); process.exit(0); }
+
+    const now = Date.now() / 1000;
+    function until(ts) {
+      const diff = new Date(ts).getTime() / 1000 - now;
+      if (diff <= 0) return "expired";
+      const d = Math.floor(diff / 86400), h = Math.floor((diff % 86400) / 3600), m = Math.floor((diff % 3600) / 60);
+      if (d > 0) return d + "d " + h + "h";
+      if (h > 0) return h + "h " + m + "m";
+      return m + "m";
+    }
+    function fmt(obj, label) {
+      if (!obj || obj.utilization == null) return null;
+      return label + "=" + obj.utilization + "%  (resets in " + until(obj.resets_at) + ")";
+    }
+
+    fetch("https://claude.ai/api/oauth/usage", {
+      headers: {
+        "Authorization": "Bearer " + token,
+        "anthropic-client-platform": "claude_code_cli",
+        "User-Agent": "claude-code/2.1.146",
+        "Accept": "application/json",
+      }
+    }).then(r => {
+      if (!r.ok) { process.stdout.write("error:HTTP " + r.status); return null; }
+      return r.json();
+    }).then(d => {
+      if (!d) return;
+      const parts = [
+        fmt(d.five_hour,          "5h"),
+        fmt(d.seven_day,          "7d"),
+        fmt(d.seven_day_omelette, "opus"),
+      ].filter(Boolean);
+      process.stdout.write(parts.length ? parts.join("  ·  ") : "no data");
+    }).catch(e => { process.stdout.write("error:" + e.message); });
+  ' 2>/dev/null) || true
+
+  if [[ "$output" == error:* ]]; then
+    log "claude" "usage" "${output#error:}"
+  else
+    log "claude" "usage" "${output:-no response}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # PATH setup via NVM (needed so codex can be found)
 # ---------------------------------------------------------------------------
 
@@ -325,6 +390,7 @@ main() {
 
   setup_path
 
+  fetch_claude_usage &
   trigger_agent "claude" &
   trigger_agent "codex" &
   wait
