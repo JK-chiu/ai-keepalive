@@ -343,9 +343,8 @@ fetch_claude_usage() {
     }).then(d => {
       if (!d) return;
       const parts = [
-        fmt(d.five_hour,          "5h"),
-        fmt(d.seven_day,          "7d"),
-        fmt(d.seven_day_omelette, "opus"),
+        fmt(d.five_hour,  "5h"),
+        fmt(d.seven_day,  "7d"),
       ].filter(Boolean);
       process.stdout.write(parts.length ? parts.join("  ·  ") : "no data");
     }).catch(e => { process.stdout.write("error:" + e.message); });
