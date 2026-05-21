@@ -149,8 +149,9 @@ tail -f ~/.ai-keepalive/keepalive.log
 ```
 ────────────────────────────────────────────────────────────
 2026-xx-xxTxx:xx:xx+08:00  keepalive  start      pid=...
-2026-xx-xxTxx:xx:xx+08:00  claude     ok         視窗到期 HH:MM:SS  (還剩 Xh Ym)
-2026-xx-xxTxx:xx:xx+08:00  codex      ok         視窗到期 HH:MM:SS  (還剩 Xh Ym)
+2026-xx-xxTxx:xx:xx+08:00  claude     usage      5h=61%  (resets in 2h 17m)  ·  7d=44%  (resets in 20h 17m)
+2026-xx-xxTxx:xx:xx+08:00  claude     ok         [5h] window resets at HH:MM:SS  (remaining Xh Ym)
+2026-xx-xxTxx:xx:xx+08:00  codex      ok         window resets at HH:MM:SS  (remaining Xh Ym)
 2026-xx-xxTxx:xx:xx+08:00  keepalive  done       Xs
 ```
 
@@ -179,6 +180,27 @@ CRON_TZ=Asia/Taipei
 ```
 
 透過 `CRON_TZ` 指定時區，系統時區為 UTC 也能正確以台灣時間觸發。
+
+---
+
+## Usage Stats（訂閱用量）
+
+每次執行時，腳本會額外呼叫 `api.anthropic.com/api/oauth/usage`，記錄 Claude Max/Pro 訂閱的用量百分比：
+
+```
+claude     usage      5h=61%  (resets in 2h 17m)  ·  7d=44%  (resets in 20h 17m)
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `5h=XX%` | 5 小時視窗目前用量 |
+| `7d=XX%` | 7 天視窗目前用量 |
+
+此功能需要：
+- Claude Code 已以 OAuth 方式登入（`~/.claude/.credentials.json` 含有效 token）
+- Node.js v18+（Linux 透過 NVM，Windows 透過 npm 安裝 Codex 時已具備）
+
+若 token 不存在或 API 失敗，只記錄錯誤訊息，不影響 keepalive ping。
 
 ---
 
@@ -334,7 +356,7 @@ Get-ScheduledTask -TaskName ai-keepalive
 僅目前使用者登入時執行
 ```
 
-若已存在同名 task `ai-keepalive`，安裝器只提醒並保留既有 task，不覆蓋觸發時間。
+若已存在同名 task `ai-keepalive`，安裝器只更新 action（腳本路徑與設定），**不覆蓋使用者自訂的觸發時間**。
 
 手動觸發：
 
